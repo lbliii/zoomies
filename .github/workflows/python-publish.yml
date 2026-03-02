@@ -46,7 +46,7 @@ jobs:
 
     environment:
       name: pypi
-      url: https://pypi.org/p/zoomies
+      url: https://pypi.org/project/bengal-zoomies/
 
     steps:
       - name: Retrieve release distributions
