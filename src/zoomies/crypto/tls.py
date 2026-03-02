@@ -256,7 +256,7 @@ class QuicTlsContext:
                     )
                 else:
                     break
-            except (ValueError, BufferReadError):
+            except ValueError, BufferReadError:
                 if self._state == TlsHandshakeState.START:
                     self._state = TlsHandshakeState.CLIENT_HELLO_RECEIVED
                 else:

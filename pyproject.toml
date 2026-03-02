@@ -99,6 +99,50 @@ select = [
 "__init__.py" = ["F401"]   # Allow unused imports in __init__ files
 "tests/**/*.py" = ["S101"] # Allow assert in tests
 
+# =============================================================================
+# Task Runner (poethepoet) — use: poe <task>
+# =============================================================================
+
+[tool.poe.tasks]
+# Testing
+test = { cmd = "pytest", help = "Run full test suite" }
+test-fast = { cmd = "pytest tests/ -x -q --timeout=10", help = "Fast feedback loop" }
+test-parallel = { cmd = "pytest -n auto -q --tb=short --dist worksteal", help = "Run tests in parallel (CI)" }
+test-cov = { cmd = "pytest tests/ --cov=zoomies --cov-report=term-missing", help = "Run tests with coverage" }
+
+# Type Checking
+ty = { cmd = "ty check src/zoomies/", help = "Run ty type checker" }
+ty-strict = { cmd = "ty check src/zoomies/ --error-on-warning", help = "Strict type checking" }
+
+# Linting & Formatting
+lint = { cmd = "ruff check .", help = "Run ruff linter" }
+lint-fix = { cmd = "ruff check . --fix", help = "Run ruff linter with auto-fix" }
+format = { cmd = "ruff format .", help = "Format code with ruff" }
+format-check = { cmd = "ruff format . --check", help = "Check formatting" }
+
+# CI Pipeline
+ci = { sequence = [
+    "lint",
+    "format-check",
+    "ty",
+    "test",
+], help = "Full CI check" }
+check = { sequence = [
+    "lint",
+    "format-check",
+    "ty",
+], help = "Quick check (no tests)" }
+
+# Build & Release
+dist = { shell = "rm -rf dist/ && uv build && ls -la dist/", help = "Build distribution" }
+
+# Cleanup
+clean.shell = """
+rm -rf dist build .pytest_cache .coverage htmlcov .ruff_cache .ty_cache
+find . -type d -name '__pycache__' -exec rm -rf {} + 2>/dev/null || true
+"""
+clean.help = "Remove build artifacts and caches"
+
 [dependency-groups]
 dev = [
     "pytest>=9.0.2",
@@ -108,6 +152,7 @@ dev = [
     "ty>=0.0.11",
     "ruff>=0.15.1",
     "pre-commit>=4.0.0",
+    "poethepoet>=0.35.0",
     "hypothesis>=6.100.0",
 ]
 docs = ["bengal>=0.2.0"]

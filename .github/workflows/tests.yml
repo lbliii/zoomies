@@ -44,7 +44,7 @@ jobs:
           CI: true
           PYTHON_GIL: "0"
         run: |
-          uv run pytest -n auto -q --tb=short --dist worksteal
+          uv run poe test-parallel
 
   typecheck:
     runs-on: ubuntu-latest
@@ -69,7 +69,7 @@ jobs:
 
       - name: Run ty
         run: |
-          uv run ty check src/zoomies
+          uv run poe ty
 
   lint:
     runs-on: ubuntu-latest
@@ -92,10 +92,10 @@ jobs:
       - name: Install dependencies
         run: uv sync --group dev
 
-      - name: Run ruff check
+      - name: Run lint
         run: |
-          uv run ruff check src/zoomies tests/
+          uv run poe lint
 
-      - name: Run ruff format check
+      - name: Run format check
         run: |
-          uv run ruff format --check src/zoomies tests/
+          uv run poe format-check
