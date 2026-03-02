@@ -370,6 +370,8 @@ class QuicTlsContext:
 
     def _handle_finished(self, msg: bytes) -> None:
         """Verify client Finished."""
+        if self._handshake_secret is None:
+            raise ValueError("Handshake secret not set")
         buf = Buffer(data=msg)
         if buf.pull_uint8() != HANDSHAKE_FINISHED:
             raise ValueError("Expected Finished")

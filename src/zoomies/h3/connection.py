@@ -19,7 +19,7 @@ H3_FRAME_HEADERS = 0x01
 
 
 class H3StreamSender(Protocol):
-    """Protocol for sending H3 stream data into the QUIC layer. Implemented by QuicConnection or any QUIC sender."""
+    """Protocol for sending H3 stream data into the QUIC layer. Implemented by QuicConnection."""
 
     def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool) -> None: ...
 

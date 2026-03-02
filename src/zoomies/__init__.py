@@ -1,7 +1,7 @@
 """Zoomies — Free-threading-native QUIC and HTTP/3 for Python 3.14t.
 
 A sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114).
-Native to the b-stack (Pounce, Chirp); no b-stack deps. Usable anywhere. Built for free-threaded Python 3.14t.
+Native to the b-stack (Pounce, Chirp); no b-stack deps. Usable anywhere. Built for Python 3.14t.
 
 **Public API:**
 
