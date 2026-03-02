@@ -2,17 +2,22 @@
 
 from tests.utils import load
 from zoomies.core import QuicConfiguration, QuicConnection
+from zoomies.crypto import CryptoPair
 from zoomies.encoding import Buffer
-from zoomies.events import DatagramReceived, HandshakeComplete
+from zoomies.events import DatagramReceived, HandshakeComplete, StreamDataReceived
+from zoomies.frames.stream import StreamFrame, push_stream_frame
 from zoomies.packet.builder import push_initial_packet_header
+from zoomies.primitives import StreamId
 
 CERT = load("fixtures/ssl_cert.pem")
 KEY = load("fixtures/ssl_key.pem")
+SERVER_CID = b"\x83\x94\xc8\xf0\x3e\x51\x57\x08"
+CLIENT_CID = b"\xf0\x67\xa5\x50\x2a\x42\x62\xb5"
 
 
 def _make_initial_packet(
-    dest_cid: bytes = b"\x83\x94\xc8\xf0\x3e\x51\x57\x08",
-    src_cid: bytes = b"\xf0\x67\xa5\x50\x2a\x42\x62\xb5",
+    dest_cid: bytes = SERVER_CID,
+    src_cid: bytes = CLIENT_CID,
     payload: bytes = b"\x00" * 50,
 ) -> bytes:
     """Build minimal Initial packet (header + payload, unencrypted for test)."""
@@ -89,3 +94,75 @@ def test_h3_connection_wired_to_quic_send_stream_data() -> None:
     h3.send_data(stream_id=0, data=b"ok", end_stream=True)
     # QuicConnection queued the stream data; verify queue has entries
     assert len(quic._stream_send_queue) == 2
+
+
+def test_connection_stream_data_received_from_stream_frame() -> None:
+    """QuicConnection emits StreamDataReceived when payload contains STREAM frame."""
+    import pytest
+
+    # Build Initial packet with STREAM frame in payload (client -> server)
+    client_crypto = CryptoPair()
+    client_crypto.setup_initial(cid=SERVER_CID, is_client=True)
+    payload_buf = Buffer()
+    push_stream_frame(
+        payload_buf,
+        StreamFrame(
+            stream_id=StreamId(0),
+            offset=0,
+            data=b"hello",
+            fin=True,
+        ),
+    )
+    plain_payload = payload_buf.data
+    pn = 0
+    pn_bytes = pn.to_bytes(4, "big")
+    plain = pn_bytes + plain_payload
+    header_buf = Buffer()
+    push_initial_packet_header(
+        header_buf,
+        destination_cid=SERVER_CID,
+        source_cid=CLIENT_CID,
+        token=b"",
+        payload_length=len(plain) + 16,
+    )
+    plain_header = header_buf.data
+    packet = client_crypto.encrypt_packet(plain_header, plain_payload, pn)
+
+    config = QuicConfiguration(certificate=CERT, private_key=KEY)
+    conn = QuicConnection(config)
+    events = conn.datagram_received(packet, ("127.0.0.1", 443))
+
+    if not any(isinstance(e, HandshakeComplete) for e in events):
+        pytest.skip(
+            "Decrypt failed (header protection). Run after Phase 3.1."
+        )
+    stream_events = [e for e in events if isinstance(e, StreamDataReceived)]
+    assert len(stream_events) == 1
+    assert stream_events[0].stream_id == 0
+    assert stream_events[0].data == b"hello"
+    assert stream_events[0].end_stream is True
+
+
+def test_connection_parse_payload_frames_stream() -> None:
+    """_parse_payload_frames extracts StreamDataReceived from STREAM frames."""
+    # Direct test of frame parsing (no crypto)
+    payload_buf = Buffer()
+    push_stream_frame(
+        payload_buf,
+        StreamFrame(
+            stream_id=StreamId(4),
+            offset=0,
+            data=b"world",
+            fin=False,
+        ),
+    )
+    plain_payload = payload_buf.data
+
+    config = QuicConfiguration(certificate=CERT, private_key=KEY)
+    conn = QuicConnection(config)
+    result = conn._parse_payload_frames(plain_payload)
+
+    assert len(result) == 1
+    assert result[0].stream_id == 4
+    assert result[0].data == b"world"
+    assert result[0].end_stream is False

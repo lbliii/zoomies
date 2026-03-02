@@ -3,11 +3,12 @@
 A sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114).
 Designed for Pounce and Chirp, built for free-threaded Python 3.14t.
 
-**Public API (coming soon):**
+**Public API:**
 
-- `receive_datagram()`: Feed UDP datagrams in, get protocol events out
-- `datagrams_to_send()`: Get outbound datagrams to transmit
-- `H3Connection`: HTTP/3 connection state machine (sans-I/O)
+- `QuicConnection.datagram_received()`: Feed UDP datagrams in, get protocol events
+- `QuicConnection.send_datagrams()`: Get outbound datagrams to transmit
+- `H3Connection`: HTTP/3 connection state machine (handle_event, send_headers, send_data)
+- Events: `HandshakeComplete`, `StreamDataReceived`, `H3HeadersReceived`, `H3DataReceived`
 
 **Design Philosophy:**
 
@@ -25,11 +26,37 @@ Designed for Pounce and Chirp, built for free-threaded Python 3.14t.
 
 **Architecture:**
 
-    datagram in → QuicConnection.receive_datagram() → QuicEvent
+    datagram in → QuicConnection.datagram_received() → QuicEvent
     QuicEvent → H3Connection.handle_event() → H3Event (HeadersReceived, DataReceived)
     H3Event → build_scope() → ASGI app
 
-**Status:** Pre-alpha. Scaffolding phase. See docs/design/architecture.md.
+**Status:** Pre-alpha. Pounce-ready API. See docs/design/architecture.md.
 """
+
+from zoomies.core import QuicConfiguration, QuicConnection
+from zoomies.events import (
+    ConnectionClosed,
+    DatagramReceived,
+    H3DataReceived,
+    H3HeadersReceived,
+    HandshakeComplete,
+    QuicEvent,
+    StreamDataReceived,
+)
+from zoomies.h3 import H3Connection, H3StreamSender
+
+__all__ = [
+    "ConnectionClosed",
+    "DatagramReceived",
+    "H3Connection",
+    "H3DataReceived",
+    "H3HeadersReceived",
+    "H3StreamSender",
+    "HandshakeComplete",
+    "QuicConfiguration",
+    "QuicConnection",
+    "QuicEvent",
+    "StreamDataReceived",
+]
 
 __version__ = "0.1.0"

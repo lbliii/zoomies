@@ -12,8 +12,16 @@ from zoomies.events import (
     DatagramReceived,
     HandshakeComplete,
     QuicEvent,
+    StreamDataReceived,
 )
-from zoomies.frames.common import PingFrame, push_ping_frame
+from zoomies.frames.ack import pull_ack_frame
+from zoomies.frames.common import (
+    PingFrame,
+    pull_padding_frame,
+    pull_ping_frame,
+    push_ping_frame,
+)
+from zoomies.frames.stream import pull_stream_frame
 from zoomies.packet.builder import push_initial_packet_header
 from zoomies.packet.header import (
     PACKET_TYPE_INITIAL,
@@ -66,7 +74,7 @@ class QuicConnection:
         try:
             buf = Buffer(data=data)
             header = pull_quic_header(buf, host_cid_length=None)
-        except ValueError, Exception:
+        except (ValueError, Exception):
             events.append(ConnectionClosed(error_code=0x0A, reason="Invalid header"))
             self._state = ConnectionState.CLOSED
             return events
@@ -79,16 +87,51 @@ class QuicConnection:
                 self._crypto = CryptoPair()
                 self._crypto.setup_initial(cid=self._our_cid, is_client=False)
                 try:
-                    _ph, _pp, _pn = self._crypto.decrypt_packet(data, encrypted_offset, 0)
+                    _ph, plain_payload, _pn = self._crypto.decrypt_packet(
+                        data, encrypted_offset, 0
+                    )
                     self._state = ConnectionState.HANDSHAKE
                     self._queue_initial_response()
                     events.append(HandshakeComplete())
+                    for s in self._parse_payload_frames(plain_payload):
+                        events.append(s)
                 except InvalidTag:
                     self._queue_initial_response()
                     self._state = ConnectionState.HANDSHAKE
                     events.append(HandshakeComplete())
 
         return events
+
+    def _parse_payload_frames(self, payload: bytes) -> list[StreamDataReceived]:
+        """Parse QUIC frames from decrypted payload; yield StreamDataReceived."""
+        result: list[StreamDataReceived] = []
+        buf = Buffer(data=payload)
+        while not buf.eof():
+            try:
+                pos = buf.tell()
+                first = buf.pull_uint8()
+                buf.seek(pos)
+                if first == 0x00:
+                    pull_padding_frame(buf)
+                elif first == 0x01:
+                    pull_ping_frame(buf)
+                elif first in (0x02, 0x03):
+                    buf.pull_uint8()
+                    pull_ack_frame(buf)
+                elif (first & 0x08) == 0x08:
+                    frame = pull_stream_frame(buf)
+                    result.append(
+                        StreamDataReceived(
+                            stream_id=frame.stream_id.value,
+                            data=frame.data,
+                            end_stream=frame.fin,
+                        )
+                    )
+                else:
+                    break
+            except (ValueError, Exception):
+                break
+        return result
 
     def _queue_initial_response(self) -> None:
         """Queue server Initial packet."""

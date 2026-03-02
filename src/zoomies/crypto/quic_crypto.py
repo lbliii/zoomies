@@ -111,12 +111,16 @@ class CryptoContext:
     def _apply_header_protection(
         self, header: bytes, payload: bytes, pn_len: int
     ) -> tuple[bytes, bytes]:
-        """Apply header protection; returns (masked_header, masked_payload)."""
+        """Apply header protection; returns (masked_header, masked_payload).
+
+        RFC 9001 5.4.2: sample is taken 4 bytes after PN start.
+        """
         if self._hp is None:
             raise RuntimeError("Crypto not initialized")
-        sample = payload[:SAMPLE_SIZE]
+        sample_offset = 4
+        sample = payload[sample_offset : sample_offset + SAMPLE_SIZE]
         mask = _aes_ecb_encrypt(self._hp, sample)
-        mask_first = mask[0] & (0x1F if (header[0] & 0x80) else 0x0F)
+        mask_first = mask[0] & (0x0F if (header[0] & 0x80) else 0x1F)
         masked_header = bytes([header[0] ^ mask_first]) + header[1:]
         masked_start = bytes(payload[i] ^ mask[1 + i] for i in range(pn_len))
         return masked_header, masked_start + payload[pn_len:]
@@ -124,12 +128,16 @@ class CryptoContext:
     def _remove_header_protection(
         self, packet: bytes, encrypted_offset: int, pn_len: int
     ) -> tuple[bytes, bytes]:
-        """Remove header protection; return (plain_header, ciphertext)."""
+        """Remove header protection; return (plain_header, ciphertext).
+
+        RFC 9001 5.4.2: sample is taken 4 bytes after PN start (assume 4-byte PN).
+        """
         if self._hp is None:
             raise RuntimeError("Crypto not initialized")
-        sample = packet[encrypted_offset : encrypted_offset + SAMPLE_SIZE]
+        sample_offset = encrypted_offset + 4
+        sample = packet[sample_offset : sample_offset + SAMPLE_SIZE]
         mask = _aes_ecb_encrypt(self._hp, sample)
-        mask_first = mask[0] & (0x1F if (packet[0] & 0x80) else 0x0F)
+        mask_first = mask[0] & (0x0F if (packet[0] & 0x80) else 0x1F)
         plain_header = bytes([packet[0] ^ mask_first]) + packet[1:encrypted_offset]
         unmasked_start = bytes(packet[encrypted_offset + i] ^ mask[1 + i] for i in range(pn_len))
         ciphertext = unmasked_start + packet[encrypted_offset + pn_len :]

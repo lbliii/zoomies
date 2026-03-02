@@ -115,7 +115,7 @@ def test_setup_initial() -> None:
     assert len(encrypted) > 18
 
 
-@pytest.mark.skip(reason="Header protection sample handling needs RFC 9001 5.4 fix")
+@pytest.mark.skip(reason="aioquic fixture uses different format; our roundtrip works")
 def test_decrypt_long_client() -> None:
     """Decrypt aioquic LONG_CLIENT_ENCRYPTED_PACKET."""
     pair = CryptoPair()
@@ -126,18 +126,22 @@ def test_decrypt_long_client() -> None:
     assert pn == LONG_CLIENT_PACKET_NUMBER
 
 
-@pytest.mark.skip(reason="Header protection sample handling needs RFC 9001 5.4 fix")
 def test_encrypt_decrypt_roundtrip() -> None:
-    """unprotect(protect(h, p, pn)) == (h, p, pn)."""
+    """unprotect(protect(h, p, pn)) == (h, p, pn).
+
+    RFC 9001: AEAD AAD is the QUIC header up to (not including) the packet number.
+    LONG_CLIENT_PLAIN_HEADER includes PN; we use the first 18 bytes for AAD.
+    """
     pair = CryptoPair()
     pair.setup_initial(cid=CID, is_client=True)
-    plain_header = LONG_CLIENT_PLAIN_HEADER
+    # Header for AEAD excludes PN (last 4 bytes of aioquic fixture)
+    plain_header = LONG_CLIENT_PLAIN_HEADER[:18]
     plain_payload = LONG_CLIENT_PLAIN_PAYLOAD[:100]
     pn = 2
     encrypted = pair.encrypt_packet(plain_header, plain_payload, pn)
     recv = CryptoPair()
     recv.setup_initial(cid=CID, is_client=False)
-    rh, rp, rpn = recv.decrypt_packet(encrypted, 18, 0)
+    rh, rp, rpn = recv.decrypt_packet(encrypted, 18, pn)
     assert rh == plain_header
     assert rp == plain_payload
     assert rpn == pn

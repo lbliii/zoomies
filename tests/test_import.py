@@ -16,3 +16,20 @@ def test_zoomies_events_module() -> None:
     assert event.data == b""
     assert event.addr == ("127.0.0.1", 443)
     assert HandshakeComplete() is not None
+
+
+def test_zoomies_public_api() -> None:
+    """Public API exports from zoomies package."""
+    from zoomies import (
+        H3Connection,
+        H3HeadersReceived,
+        HandshakeComplete,
+        QuicConfiguration,
+        QuicConnection,
+    )
+
+    assert QuicConnection is not None
+    assert QuicConfiguration is not None
+    assert H3Connection is not None
+    assert HandshakeComplete() is not None
+    assert H3HeadersReceived(stream_id=0, headers=[], end_stream=True) is not None
