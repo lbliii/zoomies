@@ -1,9 +1,13 @@
 """
-Minimal Pounce-style H3 server loop — sans-I/O.
+Minimal H3 server loop (sans-I/O).
 
-Demonstrates the Pounce flow:
+Demonstrates the sans-I/O flow (same pattern used by Pounce):
   datagram_received -> events -> handle_event -> build scope
   -> send_headers/send_data -> send_datagrams
+
+Simplified demo: synthetic client Initial with STREAM frame. Real QUIC sends
+CRYPTO(ClientHello) first, then STREAM in 1-RTT after TLS. Full flow needs
+a real client (e.g. curl --http3).
 
 Run (requires cert/key in tests/fixtures/):
     uv run python -m examples.h3_server_loop
@@ -101,7 +105,7 @@ def main() -> None:
     packet = _build_initial_with_h3_request()
     addr = ("127.0.0.1", 54321)
 
-    # Pounce-style loop: datagram_received -> events
+    # Sans-I/O loop: datagram_received -> events
     events = quic.datagram_received(packet, addr)
 
     # handle_event for each QUIC event -> H3 events
@@ -133,7 +137,7 @@ def main() -> None:
         print(f"  [{i}] {len(dg)} bytes")
 
     if any(isinstance(e, HandshakeComplete) for e in events) and datagrams:
-        print("✓ Pounce-style loop complete")
+        print("✓ Sans-I/O loop complete")
 
 
 if __name__ == "__main__":

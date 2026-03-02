@@ -1,0 +1,5 @@
+# Font Configuration
+# ==================
+
+fonts:
+  enabled: false

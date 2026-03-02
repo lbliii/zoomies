@@ -4,6 +4,9 @@ Sans-I/O QUIC connection — feed datagrams in, get events and datagrams out.
 Demonstrates Zoomies' QuicConnection: the protocol layer consumes bytes
 and produces events + outgoing datagrams. The caller owns the socket.
 
+Minimal demo: uses unencrypted payload so decrypt fails; server still queues
+Initial response. Full handshake requires a real client (e.g. curl --http3).
+
 Run (requires cert/key in tests/fixtures/):
     python -m examples.sans_io_connection
 

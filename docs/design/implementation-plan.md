@@ -2,6 +2,17 @@
 
 Phased plan for implementing the QUIC/HTTP3 library. **See [primitives-first.md](primitives-first.md) for the S-tier design philosophy** — build from primitives up, with explicit contracts and canonical keys. This plan provides phase details and aioquic reference points.
 
+**Current vs planned:** See [ROADMAP.md](../ROADMAP.md) for the phased roadmap (pre-alpha → alpha → beta → production). Summary:
+
+| Phase | Status | Notes |
+|-------|--------|-------|
+| 1. Buffer, packet | Done | Buffer, header parse, frames, retry |
+| 2. QUIC crypto | Done | Initial + Handshake + 1-RTT keys; TLS 1.3 handshake |
+| 3. Streams | Done | Stream state, frame parsing |
+| 4. Connection | Done | Initial, Handshake, Short header; CRYPTO, stream flush |
+| 5. H3/QPACK | Done | H3Connection, QPACK static table |
+| 6. Recovery | Not started | Congestion, RTT (optional) |
+
 ---
 
 ## aioquic Reference Summary

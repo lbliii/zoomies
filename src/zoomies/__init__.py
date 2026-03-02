@@ -1,7 +1,7 @@
 """Zoomies — Free-threading-native QUIC and HTTP/3 for Python 3.14t.
 
 A sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114).
-Designed for Pounce and Chirp, built for free-threaded Python 3.14t.
+Native to the b-stack (Pounce, Chirp); no b-stack deps. Usable anywhere. Built for free-threaded Python 3.14t.
 
 **Public API:**
 
@@ -13,7 +13,7 @@ Designed for Pounce and Chirp, built for free-threaded Python 3.14t.
 **Design Philosophy:**
 
 1. **Sans-I/O**: Protocol layer consumes bytes, produces bytes. No socket access.
-   The caller (e.g. Pounce's worker) owns I/O and feeds datagrams.
+   The caller (e.g. an ASGI server, UDP loop, or custom I/O layer) owns I/O and feeds datagrams.
 
 2. **Types as contracts**: Frozen dataclasses for events, Protocols for handlers.
    No `Any` in public APIs.
@@ -30,7 +30,7 @@ Designed for Pounce and Chirp, built for free-threaded Python 3.14t.
     QuicEvent → H3Connection.handle_event() → H3Event (HeadersReceived, DataReceived)
     H3Event → build_scope() → ASGI app
 
-**Status:** Pre-alpha. Pounce-ready API. See docs/design/architecture.md.
+**Status:** Pre-alpha. API stable for sans-I/O integration. See docs/design/architecture.md.
 """
 
 from zoomies.core import QuicConfiguration, QuicConnection

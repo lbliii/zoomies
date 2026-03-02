@@ -1,6 +1,6 @@
 # Pounce Integration Guide
 
-Zoomies exposes a Pounce-compatible API for HTTP/3 over QUIC. This document describes how Pounce wires Zoomies into its ASGI H3 bridge.
+Zoomies is framework-agnostic. This doc describes how Pounce integrates with Zoomies and wires it into its ASGI H3 bridge.
 
 ## API Surface
 

@@ -39,7 +39,7 @@ def test_connection_datagram_received() -> None:
     pkt = _make_initial_packet()
     events = conn.datagram_received(pkt, ("127.0.0.1", 443))
     assert any(isinstance(e, DatagramReceived) for e in events)
-    assert any(isinstance(e, HandshakeComplete) for e in events)
+    # HandshakeComplete only when full TLS handshake done (1-RTT ready)
 
 
 def test_connection_send_datagrams() -> None:
@@ -56,12 +56,13 @@ def test_connection_send_datagrams() -> None:
 
 
 def test_connection_handshake_complete() -> None:
-    """HandshakeComplete emitted when Initial processed."""
+    """HandshakeComplete emitted only when TLS handshake completes (1-RTT ready)."""
     config = QuicConfiguration(certificate=CERT, private_key=KEY)
     conn = QuicConnection(config)
     pkt = _make_initial_packet()
     events = conn.datagram_received(pkt, ("127.0.0.1", 443))
-    assert any(isinstance(e, HandshakeComplete) for e in events)
+    # After first Initial only, handshake not complete yet
+    assert not any(isinstance(e, HandshakeComplete) for e in events)
 
 
 def test_connection_send_stream_data_queues() -> None:
@@ -79,21 +80,31 @@ def test_connection_send_stream_data_queues() -> None:
     assert isinstance(datagrams, list)
 
 
-def test_h3_connection_wired_to_quic_send_stream_data() -> None:
-    """H3Connection(quic_conn) send_headers flows to QuicConnection.send_stream_data."""
+class RecordingSender:
+    """H3StreamSender that records send_stream_data calls."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[int, bytes, bool]] = []
+
+    def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool) -> None:
+        self.calls.append((stream_id, data, end_stream))
+
+
+def test_h3_connection_send_headers_send_data_invokes_sender() -> None:
+    """H3Connection send_headers/send_data invokes sender.send_stream_data."""
     from zoomies.h3 import H3Connection
 
-    config = QuicConfiguration(certificate=CERT, private_key=KEY)
-    quic = QuicConnection(config)
-    h3 = H3Connection(sender=quic)
+    recorder = RecordingSender()
+    h3 = H3Connection(sender=recorder)
     h3.send_headers(
         stream_id=0,
         headers=[(b":status", b"200"), (b"content-type", b"text/plain")],
         end_stream=False,
     )
     h3.send_data(stream_id=0, data=b"ok", end_stream=True)
-    # QuicConnection queued the stream data; verify queue has entries
-    assert len(quic._stream_send_queue) == 2
+    assert len(recorder.calls) == 2
+    assert recorder.calls[0][0] == 0
+    assert recorder.calls[1][2] is True
 
 
 def test_connection_stream_data_received_from_stream_frame() -> None:
@@ -132,11 +143,9 @@ def test_connection_stream_data_received_from_stream_frame() -> None:
     conn = QuicConnection(config)
     events = conn.datagram_received(packet, ("127.0.0.1", 443))
 
-    if not any(isinstance(e, HandshakeComplete) for e in events):
-        pytest.skip(
-            "Decrypt failed (header protection). Run after Phase 3.1."
-        )
     stream_events = [e for e in events if isinstance(e, StreamDataReceived)]
+    if not stream_events:
+        pytest.skip("Decrypt failed (header protection). Run after Phase 3.1.")
     assert len(stream_events) == 1
     assert stream_events[0].stream_id == 0
     assert stream_events[0].data == b"hello"

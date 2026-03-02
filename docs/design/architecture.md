@@ -6,7 +6,7 @@ Guiding design document for the Zoomies QUIC/HTTP3 library.
 
 - **Sans-I/O QUIC/HTTP3** for Python 3.14t
 - **Server-first** — initial implementation serves HTTP/3; client and multipath later
-- **Designed for Pounce** — Pounce's H3Worker will consume zoomies; `pounce[h3]` depends on zoomies
+- **Native to Pounce; usable standalone** — Pounce's H3Worker consumes zoomies; `pounce[h3]` depends on zoomies. Zero dependencies on Pounce, Chirp, or Bengal. Caller provides I/O.
 
 ## Principles
 
@@ -36,7 +36,7 @@ Layer 0: I/O (datagram send/recv)         — Caller's responsibility
 ## Integration
 
 - **Pounce** — `_h3_handler.py` and `h3_bridge.py` stay; they consume zoomies events and build ASGI scope
-- **Boundary** — `zoomies` has zero pounce imports. Pounce depends on zoomies, not the other way around
+- **Boundary** — Zoomies has zero pounce imports. The dependency is one-way: Pounce depends on zoomies.
 
 ## Design Philosophy
 

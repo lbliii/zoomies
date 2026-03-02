@@ -4,7 +4,6 @@ import pytest
 
 from tests.utils import load
 from zoomies.core import QuicConfiguration, QuicConnection
-from zoomies.events import HandshakeComplete
 
 CERT = load("fixtures/ssl_cert.pem")
 KEY = load("fixtures/ssl_key.pem")
@@ -15,13 +14,12 @@ def test_connection_integration_placeholder() -> None:
     """Placeholder for full handshake integration test.
 
     TODO: Use pre-recorded aioquic client Initial or loopback datagrams
-    to verify full handshake completion.
+    to verify full handshake completion (HandshakeComplete when 1-RTT ready).
     """
     config = QuicConfiguration(certificate=CERT, private_key=KEY)
     conn = QuicConnection(config)
     # Minimal Initial packet (unencrypted payload — decrypt will fail)
     pkt = bytes.fromhex("c300000001088394c8f03e51570808f067a5502a4262b500003200") + b"\x00" * 50
-    events = conn.datagram_received(pkt, ("127.0.0.1", 443))
-    assert any(isinstance(e, HandshakeComplete) for e in events)
+    conn.datagram_received(pkt, ("127.0.0.1", 443))
     datagrams = conn.send_datagrams()
     assert len(datagrams) >= 1

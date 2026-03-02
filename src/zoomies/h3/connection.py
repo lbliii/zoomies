@@ -19,7 +19,7 @@ H3_FRAME_HEADERS = 0x01
 
 
 class H3StreamSender(Protocol):
-    """Protocol for sending H3 stream data into QUIC layer (Pounce integration)."""
+    """Protocol for sending H3 stream data into the QUIC layer. Implemented by QuicConnection or any QUIC sender."""
 
     def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool) -> None: ...
 
@@ -42,7 +42,7 @@ def _parse_frame(buf: Buffer) -> tuple[int, bytes] | None:
         length = pull_varint(buf)
         payload = buf.pull_bytes(length)
         return (frame_type, payload)
-    except (ValueError, Exception):
+    except ValueError:
         return None
 
 

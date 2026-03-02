@@ -180,6 +180,62 @@ class CryptoPair:
         self._recv.setup(secret=recv_secret, version=version)
         self._send.setup(secret=send_secret, version=version)
 
+    def setup_handshake(
+        self,
+        handshake_secret: bytes,
+        is_client: bool,
+        version: int = QUIC_VERSION_1,
+    ) -> None:
+        """Set up Handshake keys from TLS handshake_secret (RFC 9001 A.2)."""
+        if is_client:
+            recv_label, send_label = b"s hs", b"c hs"
+        else:
+            recv_label, send_label = b"c hs", b"s hs"
+        recv_secret = _hkdf_expand_label(
+            hashes.SHA256,
+            handshake_secret,
+            recv_label,
+            b"",
+            hashes.SHA256.digest_size,
+        )
+        send_secret = _hkdf_expand_label(
+            hashes.SHA256,
+            handshake_secret,
+            send_label,
+            b"",
+            hashes.SHA256.digest_size,
+        )
+        self._recv.setup(secret=recv_secret, version=version)
+        self._send.setup(secret=send_secret, version=version)
+
+    def setup_1rtt(
+        self,
+        traffic_secret: bytes,
+        is_client: bool,
+        version: int = QUIC_VERSION_1,
+    ) -> None:
+        """Set up 1-RTT keys from TLS application traffic secret (RFC 9001 A.3)."""
+        if is_client:
+            recv_label, send_label = b"s ap", b"c ap"
+        else:
+            recv_label, send_label = b"c ap", b"s ap"
+        recv_secret = _hkdf_expand_label(
+            hashes.SHA256,
+            traffic_secret,
+            recv_label,
+            b"",
+            hashes.SHA256.digest_size,
+        )
+        send_secret = _hkdf_expand_label(
+            hashes.SHA256,
+            traffic_secret,
+            send_label,
+            b"",
+            hashes.SHA256.digest_size,
+        )
+        self._recv.setup(secret=recv_secret, version=version)
+        self._send.setup(secret=send_secret, version=version)
+
     def encrypt_packet(
         self,
         plain_header: bytes,

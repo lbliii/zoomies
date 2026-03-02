@@ -1,0 +1,9 @@
+# Custom Parameters
+# =================
+
+params:
+  project_status: "alpha"
+
+  repo_url: "https://github.com/lbliii/zoomies"
+
+  min_python: "3.14"

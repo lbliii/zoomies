@@ -94,3 +94,7 @@ uv.lock
 # DORI (local/ephemeral)
 .dori/local/
 .dori/events/
+
+# Bengal docs site
+site/public/
+site/.bengal/

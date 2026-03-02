@@ -4,7 +4,7 @@
 [![Build Status](https://github.com/lbliii/zoomies/actions/workflows/tests.yml/badge.svg)](https://github.com/lbliii/zoomies/actions/workflows/tests.yml)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://pypi.org/project/zoomies/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Status: Pre-alpha](https://img.shields.io/badge/status-pre--alpha-orange.svg)](https://pypi.org/project/zoomies/)
+[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](https://pypi.org/project/zoomies/)
 
 **Free-threading-native QUIC and HTTP/3 for Python 3.14t — sans-I/O, typed**
 
@@ -12,22 +12,23 @@
 from zoomies.core import QuicConnection, QuicConfiguration
 from zoomies.events import HandshakeComplete
 
-config = QuicConfiguration(is_client=False)
+config = QuicConfiguration(certificate=cert, private_key=key)
 conn = QuicConnection(config)
 
 # Sans-I/O: feed datagrams in, get events out
-for event in conn.receive_datagram(datagram, addr):
+events = conn.datagram_received(datagram, addr)
+for event in events:
     if isinstance(event, HandshakeComplete):
         ...
-for datagram, addr in conn.datagrams_to_send():
-    sock.sendto(datagram, addr)
+for dg in conn.send_datagrams():
+    sock.sendto(dg, addr)
 ```
 
 ---
 
 ## What is Zoomies?
 
-Zoomies is a sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114). It's designed for Pounce and Chirp, built for free-threaded Python 3.14t.
+Zoomies is a sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114). Native to the b-stack (Pounce, Chirp), it has no b-stack dependencies and works anywhere — pure Python, cryptography only, free-threaded Python 3.14t. Alpha: full TLS 1.3 handshake, Handshake + 1-RTT packets.
 
 **What's good about it:**
 
@@ -42,8 +43,8 @@ Zoomies is a sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114)
 
 | API | Description |
 |-----|-------------|
-| `QuicConnection.receive_datagram()` | Feed UDP datagram in, get protocol events |
-| `QuicConnection.datagrams_to_send()` | Get outbound datagrams to transmit |
+| `QuicConnection.datagram_received()` | Feed UDP datagram in, get protocol events |
+| `QuicConnection.send_datagrams()` | Get outbound datagrams to transmit |
 | `H3Connection` | HTTP/3 connection state machine (QPACK, streams) |
 | `encode_headers` / `decode_headers` | QPACK header compression |
 | `pull_quic_header()` | Parse QUIC packet headers (Initial, Handshake, etc.) |
@@ -93,15 +94,19 @@ print(f"Version: {header.version:#x}, CID: {header.destination_cid}")
 from zoomies.core import QuicConnection, QuicConfiguration
 from zoomies.events import HandshakeComplete
 
-config = QuicConfiguration(is_client=False)
-# config.load_cert_chain("cert.pem", "key.pem")
+with open("cert.pem", "rb") as f:
+    cert = f.read()
+with open("key.pem", "rb") as f:
+    key = f.read()
+config = QuicConfiguration(certificate=cert, private_key=key)
 conn = QuicConnection(config)
 
-for event in conn.receive_datagram(datagram, addr):
+events = conn.datagram_received(datagram, addr)
+for event in events:
     if isinstance(event, HandshakeComplete):
         print("Handshake done!")
-for dg, a in conn.datagrams_to_send():
-    sock.sendto(dg, a)
+for dg in conn.send_datagrams():
+    sock.sendto(dg, addr)
 ```
 
 **Run the examples** (from repo root):
@@ -137,7 +142,7 @@ from zoomies.events import (
     ConnectionClosed,
 )
 
-for event in conn.receive_datagram(datagram, addr):
+for event in conn.datagram_received(datagram, addr):
     match event:
         case HandshakeComplete():
             ...
@@ -189,9 +194,9 @@ ty check
 
 ---
 
-## The Bengal Ecosystem
+## Related: The Bengal Ecosystem
 
-A structured reactive stack — every layer written in pure Python for 3.14t free-threading.
+Zoomies is developed as part of the b-stack but is standalone. No imports from Bengal, Chirp, or Pounce. A structured reactive stack — every layer written in pure Python for 3.14t free-threading.
 
 | | | | |
 |--:|---|---|---|

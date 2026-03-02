@@ -4,6 +4,7 @@ from zoomies.encoding import Buffer
 from zoomies.packet.header import (
     PACKET_FIXED_BIT,
     PACKET_LONG_HEADER,
+    PACKET_TYPE_HANDSHAKE,
     PACKET_TYPE_INITIAL,
 )
 
@@ -55,3 +56,38 @@ def push_initial_packet_header(
         token=token,
         payload_length=payload_length,
     )
+
+
+def push_handshake_packet_header(
+    buf: Buffer,
+    destination_cid: bytes,
+    source_cid: bytes,
+    payload_length: int,
+) -> None:
+    """Convenience: push Handshake packet long header."""
+    push_quic_header(
+        buf,
+        PACKET_TYPE_HANDSHAKE,
+        QUIC_VERSION_1,
+        destination_cid,
+        source_cid,
+        payload_length=payload_length,
+    )
+
+
+def push_short_header(
+    buf: Buffer,
+    destination_cid: bytes,
+    packet_number: int,
+    pn_len: int = 4,
+) -> None:
+    """Push Short header (1-RTT). RFC 9000 17.3.
+
+    pn_len: 1, 2, or 4 bytes for packet number.
+    """
+    if pn_len not in (1, 2, 4):
+        raise ValueError("pn_len must be 1, 2, or 4")
+    first = PACKET_FIXED_BIT | (pn_len - 1)
+    buf.push_uint8(first)
+    buf.push_bytes(destination_cid)
+    buf.push_bytes(packet_number.to_bytes(pn_len, "big"))

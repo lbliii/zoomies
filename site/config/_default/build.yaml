@@ -1,0 +1,15 @@
+# Build Configuration
+# ===================
+
+build:
+  output_dir: "public"
+  incremental: true
+
+assets:
+  minify: true
+  fingerprint: true
+
+html_output:
+  mode: "pretty"
+  remove_comments: true
+  collapse_blank_lines: true
