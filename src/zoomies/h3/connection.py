@@ -56,9 +56,7 @@ class H3Connection:
     def handle_event(self, event: QuicEvent) -> list[H3Event]:
         """Process QUIC event; returns H3 events for StreamDataReceived only."""
         if isinstance(event, StreamDataReceived):
-            return self.stream_data_received(
-                event.stream_id, event.data, event.end_stream
-            )
+            return self.stream_data_received(event.stream_id, event.data, event.end_stream)
         return []
 
     def send_headers(
@@ -107,8 +105,7 @@ class H3Connection:
                     H3HeadersReceived(
                         stream_id=stream_id,
                         headers=[
-                            (h.name.encode("ascii"), h.value.encode("ascii"))
-                            for h in decoded
+                            (h.name.encode("ascii"), h.value.encode("ascii")) for h in decoded
                         ],
                         end_stream=end_stream and len(buf) == 0,
                     )

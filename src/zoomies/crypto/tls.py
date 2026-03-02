@@ -61,17 +61,10 @@ class TlsHandshakeResult:
 def _hkdf_label(label: bytes, context: bytes, length: int) -> bytes:
     """TLS 1.3 HKDF label (RFC 8446 7.1)."""
     full = b"tls13 " + label
-    return (
-        struct.pack("!HB", length, len(full))
-        + full
-        + struct.pack("!B", len(context))
-        + context
-    )
+    return struct.pack("!HB", length, len(full)) + full + struct.pack("!B", len(context)) + context
 
 
-def _hkdf_expand_label(
-    secret: bytes, label: bytes, context: bytes, length: int
-) -> bytes:
+def _hkdf_expand_label(secret: bytes, label: bytes, context: bytes, length: int) -> bytes:
     """HKDF-Expand-Label (RFC 8446 7.1)."""
     return HKDFExpand(
         algorithm=hashes.SHA256(),
@@ -291,9 +284,7 @@ class QuicTlsContext:
                 peer_public = x25519.X25519PublicKey.from_public_bytes(key_data)
                 break
             if group == GROUP_SECP256R1:
-                peer_public = ec.EllipticCurvePublicKey.from_encoded_point(
-                    ec.SECP256R1(), key_data
-                )
+                peer_public = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), key_data)
                 break
         if peer_public is None:
             raise ValueError("No supported key share")
@@ -314,15 +305,11 @@ class QuicTlsContext:
             key_share = (GROUP_SECP256R1, server_pub)
 
         self._server_random = os.urandom(32)
-        server_hello = _build_server_hello(
-            self._server_random, session_id, key_share
-        )
+        server_hello = _build_server_hello(self._server_random, session_id, key_share)
         self._handshake_hash.update(server_hello)
 
         early_secret = _hkdf_extract(bytes(32), bytes(32))
-        derived = _hkdf_expand_label(
-            early_secret, b"derived", b"", 32
-        )
+        derived = _hkdf_expand_label(early_secret, b"derived", b"", 32)
         self._handshake_secret = _hkdf_extract(derived, shared)
 
         ee = _build_encrypted_extensions()
@@ -333,13 +320,9 @@ class QuicTlsContext:
         self._handshake_hash.update(cert_msg)
 
         transcript_hash = self._handshake_hash.copy().finalize()
-        verify_data = (
-            b" " * 64 + SERVER_CONTEXT_STRING + b"\x00" + transcript_hash
-        )
+        verify_data = b" " * 64 + SERVER_CONTEXT_STRING + b"\x00" + transcript_hash
         if isinstance(self._key, ec.EllipticCurvePrivateKey):
-            signature = self._key.sign(
-                verify_data, ec.ECDSA(hashes.SHA256())
-            )
+            signature = self._key.sign(verify_data, ec.ECDSA(hashes.SHA256()))
             sig_alg = SIG_ECDSA_SECP256R1_SHA256
         else:
             raise ValueError("Unsupported private key type")
@@ -349,18 +332,14 @@ class QuicTlsContext:
         s_hs_traffic = _hkdf_expand_label(
             self._handshake_secret, b"s hs traffic", transcript_hash, 32
         )
-        fin_key = _hkdf_expand_label(
-            s_hs_traffic, b"finished", b"", 32
-        )
+        fin_key = _hkdf_expand_label(s_hs_traffic, b"finished", b"", 32)
         h = hmac.HMAC(fin_key, hashes.SHA256())
         h.update(transcript_hash)
         verify_data_fin = h.finalize()
         finished = _build_finished(verify_data_fin)
         self._handshake_hash.update(finished)
 
-        derived2 = _hkdf_expand_label(
-            self._handshake_secret, b"derived", transcript_hash, 32
-        )
+        derived2 = _hkdf_expand_label(self._handshake_secret, b"derived", transcript_hash, 32)
         master_secret = _hkdf_extract(derived2, bytes(32))
         self._traffic_secret = _hkdf_expand_label(
             master_secret, b"s ap traffic", transcript_hash, 32
@@ -377,8 +356,7 @@ class QuicTlsContext:
             raise ValueError("Expected Finished")
         client_verify = _pull_block(buf, 3)
         c_hs_traffic = _hkdf_expand_label(
-            self._handshake_secret, b"c hs traffic",
-            self._handshake_hash.copy().finalize(), 32
+            self._handshake_secret, b"c hs traffic", self._handshake_hash.copy().finalize(), 32
         )
         fin_key = _hkdf_expand_label(c_hs_traffic, b"finished", b"", 32)
         h = hmac.HMAC(fin_key, hashes.SHA256())

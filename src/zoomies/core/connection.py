@@ -55,9 +55,7 @@ class ConnectionState(StrEnum):
     CLOSED = "closed"
 
 
-def _merge_crypto_ranges(
-    ranges: list[tuple[int, bytes]]
-) -> list[tuple[int, bytes]]:
+def _merge_crypto_ranges(ranges: list[tuple[int, bytes]]) -> list[tuple[int, bytes]]:
     """Merge overlapping/adjacent (offset, data) ranges."""
     if not ranges:
         return []
@@ -98,9 +96,7 @@ class QuicConnection:
         self._crypto_recv: list[tuple[int, bytes]] = []
         self._crypto_fed = 0
 
-    def send_stream_data(
-        self, stream_id: int, data: bytes, end_stream: bool = False
-    ) -> None:
+    def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool = False) -> None:
         """Queue stream data for sending (H3StreamSender protocol)."""
         self._stream_send_queue.append((stream_id, data, end_stream))
 
@@ -135,9 +131,7 @@ class QuicConnection:
 
         return events
 
-    def _handle_initial(
-        self, data: bytes, buf: Buffer, header: LongHeader
-    ) -> list[QuicEvent]:
+    def _handle_initial(self, data: bytes, buf: Buffer, header: LongHeader) -> list[QuicEvent]:
         """Handle Initial packet."""
         events: list[QuicEvent] = []
         encrypted_offset = buf.tell()
@@ -168,9 +162,7 @@ class QuicConnection:
             self._state = ConnectionState.HANDSHAKE
         return events
 
-    def _handle_handshake(
-        self, data: bytes, buf: Buffer, header: LongHeader
-    ) -> list[QuicEvent]:
+    def _handle_handshake(self, data: bytes, buf: Buffer, header: LongHeader) -> list[QuicEvent]:
         """Handle Handshake packet."""
         events: list[QuicEvent] = []
         if not self._handshake_crypto:
@@ -186,9 +178,7 @@ class QuicConnection:
             pass
         return events
 
-    def _handle_short(
-        self, data: bytes, buf: Buffer, header: ShortHeader
-    ) -> list[QuicEvent]:
+    def _handle_short(self, data: bytes, buf: Buffer, header: ShortHeader) -> list[QuicEvent]:
         """Handle Short header (1-RTT)."""
         events: list[QuicEvent] = []
         if self._state != ConnectionState.ONE_RTT or not self._one_rtt_crypto:
@@ -224,9 +214,7 @@ class QuicConnection:
         result = self._tls_ctx.receive(to_feed)
         if result.handshake_secret and not self._handshake_crypto:
             self._handshake_crypto = CryptoPair()
-            self._handshake_crypto.setup_handshake(
-                result.handshake_secret, is_client=False
-            )
+            self._handshake_crypto.setup_handshake(result.handshake_secret, is_client=False)
         if result.data_to_send:
             self._queue_handshake_response(result.data_to_send)
         if result.traffic_secret and not self._one_rtt_crypto:
@@ -302,9 +290,7 @@ class QuicConnection:
             if not chunk:
                 break
             payload_buf = Buffer()
-            push_crypto_frame(
-                payload_buf, CryptoFrame(offset=offset, data=chunk)
-            )
+            push_crypto_frame(payload_buf, CryptoFrame(offset=offset, data=chunk))
             plain_payload = payload_buf.data
             pn = self._handshake_pn
             pn_bytes = pn.to_bytes(4, "big")
@@ -318,9 +304,7 @@ class QuicConnection:
                 payload_length=ciphertext_len,
             )
             plain_header = header_buf.data
-            encrypted = self._handshake_crypto.encrypt_packet(
-                plain_header, plain_payload, pn
-            )
+            encrypted = self._handshake_crypto.encrypt_packet(plain_header, plain_payload, pn)
             self._send_queue.append(encrypted)
             self._handshake_pn += 1
             offset += len(chunk)
@@ -354,9 +338,7 @@ class QuicConnection:
             header_buf = Buffer()
             push_short_header(header_buf, self._peer_cid, pn)
             plain_header = header_buf.data
-            encrypted = self._one_rtt_crypto.encrypt_packet(
-                plain_header, plain_payload, pn
-            )
+            encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
             packets.append(encrypted)
             self._one_rtt_pn += 1
         self._stream_send_queue.clear()

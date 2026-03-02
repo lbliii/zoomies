@@ -108,10 +108,7 @@ def encode_headers(headers: list[Header]) -> bytes:
 
 def encode_headers_from_bytes(headers: list[tuple[bytes, bytes]]) -> bytes:
     """Encode headers from bytes (ASGI-compatible) to QPACK format."""
-    hdrs = [
-        Header(name=n.decode("ascii"), value=v.decode("ascii"))
-        for n, v in headers
-    ]
+    hdrs = [Header(name=n.decode("ascii"), value=v.decode("ascii")) for n, v in headers]
     return encode_headers(hdrs)
 
 

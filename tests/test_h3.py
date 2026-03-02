@@ -97,9 +97,7 @@ def test_h3_send_headers_via_mock_sender() -> None:
     sent: list[tuple[int, bytes, bool]] = []
 
     class MockSender:
-        def send_stream_data(
-            self, stream_id: int, data: bytes, end_stream: bool
-        ) -> None:
+        def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool) -> None:
             sent.append((stream_id, data, end_stream))
 
     conn = H3Connection(sender=MockSender())
@@ -127,9 +125,7 @@ def test_h3_send_data_via_mock_sender() -> None:
     sent: list[tuple[int, bytes, bool]] = []
 
     class MockSender:
-        def send_stream_data(
-            self, stream_id: int, data: bytes, end_stream: bool
-        ) -> None:
+        def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool) -> None:
             sent.append((stream_id, data, end_stream))
 
     conn = H3Connection(sender=MockSender())

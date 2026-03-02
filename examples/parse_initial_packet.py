@@ -15,9 +15,9 @@ from zoomies.packet.header import LongHeader, pull_quic_header
 
 # Minimal Initial packet (header only, from Zoomies test fixtures)
 # Version 1, 8-byte dest CID, 8-byte src CID, empty token
-PACKET = bytes.fromhex(
-    "c300000001088394c8f03e51570808f067a5502a4262b500003200"
-) + b"\x00" * 50  # payload placeholder
+PACKET = (
+    bytes.fromhex("c300000001088394c8f03e51570808f067a5502a4262b500003200") + b"\x00" * 50
+)  # payload placeholder
 
 buf = Buffer(data=PACKET)
 header = pull_quic_header(buf, host_cid_length=None)
