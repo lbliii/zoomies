@@ -1,0 +1,113 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "zoomies"
+version = "0.1.0"
+description = "Free-threading-native QUIC and HTTP/3 for Python 3.14t — sans-I/O, typed"
+readme = "README.md"
+requires-python = ">=3.14"
+license = "MIT"
+keywords = [
+    "quic",
+    "http3",
+    "free-threading",
+    "nogil",
+    "sans-io",
+    "udp",
+]
+authors = [{ name = "Bengal Contributors" }]
+classifiers = [
+    "Development Status :: 2 - Pre-Alpha",
+    "Intended Audience :: Developers",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Typing :: Typed",
+]
+dependencies = ["cryptography>=42.0.0"]
+
+[project.urls]
+Homepage = "https://github.com/lbliii/zoomies"
+Documentation = "https://github.com/lbliii/zoomies"
+Repository = "https://github.com/lbliii/zoomies"
+Changelog = "https://github.com/lbliii/zoomies/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+zoomies = ["py.typed"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = ["-ra", "-q", "--strict-markers"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: full protocol integration tests",
+]
+
+[tool.coverage.run]
+source = ["src/zoomies"]
+omit = ["*/tests/*", "*/benchmarks/*"]
+
+[tool.coverage.report]
+fail_under = 0
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.",
+    "if TYPE_CHECKING:",
+    "pass",
+]
+show_missing = true
+
+[tool.ty.environment]
+python-version = "3.14"
+
+[tool.ty.src]
+exclude = ["dist/", "build/", "benchmarks/", "tests/", "examples/"]
+
+[tool.ruff]
+target-version = "py314"
+line-length = 100
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes (unused imports, variables, etc.)
+    "UP",   # pyupgrade - Python modernization
+    "B",    # flake8-bugbear - common bugs
+    "SIM",  # flake8-simplify - simplify code
+    "I",    # isort - import sorting
+    "PIE",  # misc lints (unnecessary pass, duplicate dict keys, etc.)
+    "PERF", # perflint - performance anti-patterns
+    "C4",   # unnecessary comprehensions/list()/dict() calls
+    "RUF",  # Ruff-specific (unused noqa, mutable class defaults, etc.)
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]   # Allow unused imports in __init__ files
+"tests/**/*.py" = ["S101"] # Allow assert in tests
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.2",
+    "pytest-cov>=6.0.0",
+    "pytest-timeout>=2.3.0",
+    "pytest-xdist>=3.5.0",
+    "ty>=0.0.11",
+    "ruff>=0.15.1",
+    "pre-commit>=4.0.0",
+    "hypothesis>=6.100.0",
+]
+docs = ["bengal>=0.2.0"]
