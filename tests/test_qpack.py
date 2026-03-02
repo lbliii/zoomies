@@ -1,6 +1,9 @@
 """QPACK header encode/decode round-trip."""
 
-from zoomies.h3.qpack import Header, decode_headers, encode_headers
+from hypothesis import given
+from hypothesis import strategies as st
+
+from zoomies.h3.qpack import STATIC_TABLE, Header, decode_headers, encode_headers
 
 
 def test_qpack_literal_roundtrip() -> None:
@@ -44,3 +47,22 @@ def test_qpack_mixed() -> None:
     assert decoded[0].value == "POST"
     assert decoded[1].name == "x-request-id"
     assert decoded[1].value == "abc-123"
+
+
+@given(
+    st.lists(
+        st.sampled_from([Header(name=n, value=v) for n, v in STATIC_TABLE]),
+        min_size=0,
+        max_size=20,
+    )
+)
+def test_qpack_roundtrip_property(headers: list[Header]) -> None:
+    """decode(encode(headers)) == headers for static-table headers."""
+    if not headers:
+        return
+    encoded = encode_headers(headers)
+    decoded = decode_headers(encoded)
+    assert len(decoded) == len(headers)
+    for d, h in zip(decoded, headers, strict=True):
+        assert d.name == h.name
+        assert d.value == h.value

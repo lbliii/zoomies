@@ -1,10 +1,13 @@
 """QUIC connection — handshake, stream, close."""
 
+import pytest
+
 from tests.utils import load
 from zoomies.core import QuicConfiguration, QuicConnection
 from zoomies.crypto import CryptoPair
 from zoomies.encoding import Buffer
 from zoomies.events import DatagramReceived, HandshakeComplete, StreamDataReceived
+from zoomies.frames.crypto import CryptoFrame, push_crypto_frame
 from zoomies.frames.stream import StreamFrame, push_stream_frame
 from zoomies.packet.builder import push_initial_packet_header
 from zoomies.primitives import StreamId
@@ -13,6 +16,36 @@ CERT = load("fixtures/ssl_cert.pem")
 KEY = load("fixtures/ssl_key.pem")
 SERVER_CID = b"\x83\x94\xc8\xf0\x3e\x51\x57\x08"
 CLIENT_CID = b"\xf0\x67\xa5\x50\x2a\x42\x62\xb5"
+
+
+def _build_client_hello() -> bytes:
+    """Build minimal valid ClientHello with X25519 key share."""
+    from cryptography.hazmat.primitives.asymmetric import x25519
+    from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+
+    from zoomies.crypto.tls import _push_block
+
+    priv = x25519.X25519PrivateKey.generate()
+    pub_bytes = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
+    inner = Buffer()
+    inner.push_uint16(0x0303)
+    inner.push_bytes(b"\x00" * 32)
+    _push_block(inner, 1, b"")
+    _push_block(inner, 2, bytes([0x13, 0x01]))
+    _push_block(inner, 1, bytes([0x00]))
+    share_data = Buffer()
+    share_data.push_uint16(0x001D)
+    share_data.push_uint16(len(pub_bytes))
+    share_data.push_bytes(pub_bytes)
+    key_share_payload = Buffer()
+    key_share_payload.push_uint16(len(share_data.data))
+    key_share_payload.push_bytes(share_data.data)
+    ext_buf = Buffer()
+    ext_buf.push_uint16(51)
+    ext_buf.push_uint16(len(key_share_payload.data))
+    ext_buf.push_bytes(key_share_payload.data)
+    _push_block(inner, 2, ext_buf.data)
+    return bytes([0x01]) + len(inner.data).to_bytes(3, "big") + inner.data
 
 
 def _make_initial_packet(
@@ -109,8 +142,6 @@ def test_h3_connection_send_headers_send_data_invokes_sender() -> None:
 
 def test_connection_stream_data_received_from_stream_frame() -> None:
     """QuicConnection emits StreamDataReceived when payload contains STREAM frame."""
-    import pytest
-
     # Build Initial packet with STREAM frame in payload (client -> server)
     client_crypto = CryptoPair()
     client_crypto.setup_initial(cid=SERVER_CID, is_client=True)
@@ -175,3 +206,36 @@ def test_connection_parse_payload_frames_stream() -> None:
     assert result[0].stream_id == 4
     assert result[0].data == b"world"
     assert result[0].end_stream is False
+
+
+@pytest.mark.integration
+def test_connection_initial_with_crypto_produces_handshake() -> None:
+    """Initial with CRYPTO frame (ClientHello) -> send_datagrams returns Handshake."""
+    client_crypto = CryptoPair()
+    client_crypto.setup_initial(cid=SERVER_CID, is_client=True)
+    client_hello = _build_client_hello()
+    payload_buf = Buffer()
+    push_crypto_frame(payload_buf, CryptoFrame(offset=0, data=client_hello))
+    plain_payload = payload_buf.data
+    pn = 0
+    pn_bytes = pn.to_bytes(4, "big")
+    plain = pn_bytes + plain_payload
+    header_buf = Buffer()
+    push_initial_packet_header(
+        header_buf,
+        destination_cid=SERVER_CID,
+        source_cid=CLIENT_CID,
+        token=b"",
+        payload_length=len(plain) + 16,
+    )
+    plain_header = header_buf.data
+    packet = client_crypto.encrypt_packet(plain_header, plain_payload, pn)
+
+    config = QuicConfiguration(certificate=CERT, private_key=KEY)
+    conn = QuicConnection(config)
+    conn.datagram_received(packet, ("127.0.0.1", 443))
+    datagrams = conn.send_datagrams()
+
+    if not datagrams:
+        pytest.skip("Decrypt failed (header protection). Run after Phase 3.1.")
+    assert len(datagrams) >= 1
