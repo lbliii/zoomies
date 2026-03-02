@@ -1,5 +1,6 @@
 """QUIC server connection — sans-I/O state machine (RFC 9000)."""
 
+import os
 from enum import StrEnum
 
 from cryptography.exceptions import InvalidTag
@@ -9,6 +10,8 @@ from zoomies.crypto import CryptoPair, QuicTlsContext
 from zoomies.encoding import Buffer
 from zoomies.events import (
     ConnectionClosed,
+    ConnectionIdIssued,
+    ConnectionIdRetired,
     DatagramReceived,
     HandshakeComplete,
     QuicEvent,
@@ -21,6 +24,7 @@ from zoomies.frames.common import (
     pull_ping_frame,
     push_ping_frame,
 )
+from zoomies.frames.connection_id import pull_retire_connection_id, push_new_connection_id
 from zoomies.frames.crypto import CryptoFrame, pull_crypto_frame, push_crypto_frame
 from zoomies.frames.stream import (
     StreamFrame,
@@ -35,6 +39,7 @@ from zoomies.packet.builder import (
 from zoomies.packet.header import (
     PACKET_TYPE_HANDSHAKE,
     PACKET_TYPE_INITIAL,
+    PACKET_TYPE_ZERO_RTT,
     LongHeader,
     ShortHeader,
     pull_quic_header,
@@ -95,6 +100,19 @@ class QuicConnection:
         self._stream_send_queue: list[tuple[int, bytes, bool]] = []
         self._crypto_recv: list[tuple[int, bytes]] = []
         self._crypto_fed = 0
+        self._our_cids: set[bytes] = set()
+        self._sequence_to_cid: dict[int, bytes] = {}
+        self._next_cid_sequence = 0
+
+    @property
+    def our_cid(self) -> bytes:
+        """Our connection ID (server's CID). Set after first Initial packet."""
+        return self._our_cid
+
+    @property
+    def our_cids(self) -> tuple[bytes, ...]:
+        """All active connection IDs we've issued (for CID-based routing)."""
+        return tuple(self._our_cids)
 
     def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool = False) -> None:
         """Queue stream data for sending (H3StreamSender protocol)."""
@@ -125,6 +143,9 @@ class QuicConnection:
             elif header.packet_type == PACKET_TYPE_HANDSHAKE:
                 ev = self._handle_handshake(data, buf, header)
                 events.extend(ev)
+            elif header.packet_type == PACKET_TYPE_ZERO_RTT:
+                ev = self._handle_zero_rtt(data, buf, header)
+                events.extend(ev)
         elif isinstance(header, ShortHeader):
             ev = self._handle_short(data, buf, header)
             events.extend(ev)
@@ -138,6 +159,9 @@ class QuicConnection:
 
         if self._state == ConnectionState.INITIAL:
             self._our_cid = header.destination_cid
+            self._our_cids = {self._our_cid}
+            self._sequence_to_cid = {0: self._our_cid}
+            self._next_cid_sequence = 1
             self._peer_cid = header.source_cid
             self._initial_crypto = CryptoPair()
             self._initial_crypto.setup_initial(cid=self._our_cid, is_client=False)
@@ -177,6 +201,10 @@ class QuicConnection:
         except InvalidTag:
             pass
         return events
+
+    def _handle_zero_rtt(self, data: bytes, buf: Buffer, header: LongHeader) -> list[QuicEvent]:
+        """Handle 0-RTT packet. Stub: 0-RTT receive not yet implemented."""
+        return []
 
     def _handle_short(self, data: bytes, buf: Buffer, header: ShortHeader) -> list[QuicEvent]:
         """Handle Short header (1-RTT)."""
@@ -222,10 +250,11 @@ class QuicConnection:
             self._one_rtt_crypto.setup_1rtt(result.traffic_secret, is_client=False)
             self._state = ConnectionState.ONE_RTT
             events.append(HandshakeComplete())
+            self._queue_new_connection_id(events)
 
-    def _parse_payload_frames(self, payload: bytes) -> list[StreamDataReceived]:
+    def _parse_payload_frames(self, payload: bytes, *, is_0rtt: bool = False) -> list[QuicEvent]:
         """Parse QUIC frames from decrypted payload; collect CRYPTO for TLS."""
-        result: list[StreamDataReceived] = []
+        result: list[QuicEvent] = []
         buf = Buffer(data=payload)
         while not buf.eof():
             try:
@@ -242,6 +271,12 @@ class QuicConnection:
                 elif first == CRYPTO_FRAME_TYPE:
                     frame = pull_crypto_frame(buf)
                     self._crypto_recv.append((frame.offset, frame.data))
+                elif first == 0x19:
+                    frame = pull_retire_connection_id(buf)
+                    cid = self._sequence_to_cid.pop(frame.sequence, None)
+                    if cid is not None:
+                        self._our_cids.discard(cid)
+                        result.append(ConnectionIdRetired(connection_id=cid))
                 elif (first & 0x08) == 0x08:
                     frame = pull_stream_frame(buf)
                     result.append(
@@ -249,6 +284,7 @@ class QuicConnection:
                             stream_id=frame.stream_id.value,
                             data=frame.data,
                             end_stream=frame.fin,
+                            is_0rtt=is_0rtt,
                         )
                     )
                 else:
@@ -256,6 +292,32 @@ class QuicConnection:
             except ValueError:
                 break
         return result
+
+    def _queue_new_connection_id(self, events: list[QuicEvent]) -> None:
+        """Queue 1-RTT packet with NEW_CONNECTION_ID for connection migration."""
+        if not self._one_rtt_crypto or not self._peer_cid:
+            return
+        new_cid = os.urandom(8)
+        sequence = self._next_cid_sequence
+        self._next_cid_sequence += 1
+        self._sequence_to_cid[sequence] = new_cid
+        self._our_cids.add(new_cid)
+        events.append(ConnectionIdIssued(connection_id=new_cid, retire_prior_to=0))
+        payload_buf = Buffer()
+        push_new_connection_id(
+            payload_buf,
+            sequence=sequence,
+            retire_prior_to=0,
+            connection_id=new_cid,
+        )
+        plain_payload = payload_buf.data
+        pn = self._one_rtt_pn
+        header_buf = Buffer()
+        push_short_header(header_buf, self._peer_cid, pn)
+        plain_header = header_buf.data
+        encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
+        self._send_queue.append(encrypted)
+        self._one_rtt_pn += 1
 
     def _queue_initial_response(self) -> None:
         """Queue server Initial packet."""

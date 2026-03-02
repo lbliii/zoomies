@@ -21,6 +21,7 @@ class StreamDataReceived:
     stream_id: int
     data: bytes
     end_stream: bool
+    is_0rtt: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,6 +59,7 @@ class H3HeadersReceived:
     stream_id: int
     headers: list[tuple[bytes, bytes]]
     end_stream: bool
+    is_0rtt: bool = False
 
 
 @dataclass(frozen=True, slots=True)

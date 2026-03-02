@@ -49,6 +49,36 @@ def _is_long_header(first_byte: int) -> bool:
     return bool(first_byte & PACKET_LONG_HEADER)
 
 
+def pull_destination_cid_for_routing(
+    data: bytes,
+    known_cids: tuple[bytes, ...] = (),
+) -> bytes | None:
+    """Extract destination CID from datagram for connection routing.
+
+    For long headers: parses and returns destination_cid.
+    For short headers: returns matching cid from known_cids if packet starts with it.
+    Returns None if parsing fails or no match.
+    """
+    if len(data) < 7:
+        return None
+    try:
+        buf = Buffer(data=data)
+        first_byte = buf.pull_uint8()
+        if _is_long_header(first_byte):
+            buf.pull_uint32()
+            dest_cid_len = buf.pull_uint8()
+            if dest_cid_len > CONNECTION_ID_MAX_LEN:
+                return None
+            return buf.pull_bytes(dest_cid_len)
+        if first_byte & PACKET_FIXED_BIT and known_cids:
+            for cid in known_cids:
+                if cid and len(data) >= 1 + len(cid) and data[1 : 1 + len(cid)] == cid:
+                    return cid
+    except (ValueError, BufferReadError):
+        pass
+    return None
+
+
 def decode_packet_number(truncated: int, num_bits: int, expected: int) -> int:
     """Recover packet number from truncated encoding (RFC 9000 Appendix A)."""
     window = 1 << num_bits

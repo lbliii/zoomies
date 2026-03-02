@@ -56,7 +56,12 @@ class H3Connection:
     def handle_event(self, event: QuicEvent) -> list[H3Event]:
         """Process QUIC event; returns H3 events for StreamDataReceived only."""
         if isinstance(event, StreamDataReceived):
-            return self.stream_data_received(event.stream_id, event.data, event.end_stream)
+            return self.stream_data_received(
+                event.stream_id,
+                event.data,
+                event.end_stream,
+                is_0rtt=event.is_0rtt,
+            )
         return []
 
     def send_headers(
@@ -84,7 +89,13 @@ class H3Connection:
         frame = _encode_frame(H3_FRAME_DATA, data)
         self._sender.send_stream_data(stream_id, frame, end_stream)
 
-    def stream_data_received(self, stream_id: int, data: bytes, end_stream: bool) -> list[H3Event]:
+    def stream_data_received(
+        self,
+        stream_id: int,
+        data: bytes,
+        end_stream: bool,
+        is_0rtt: bool = False,
+    ) -> list[H3Event]:
         """Process stream data; returns H3 events."""
         events: list[H3Event] = []
         self._stream_buffers.setdefault(stream_id, bytearray()).extend(data)
@@ -108,6 +119,7 @@ class H3Connection:
                             (h.name.encode("ascii"), h.value.encode("ascii")) for h in decoded
                         ],
                         end_stream=end_stream and len(buf) == 0,
+                        is_0rtt=is_0rtt,
                     )
                 )
             elif frame_type == H3_FRAME_DATA:

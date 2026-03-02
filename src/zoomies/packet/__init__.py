@@ -4,6 +4,7 @@ from zoomies.packet.header import (
     LongHeader,
     ShortHeader,
     decode_packet_number,
+    pull_destination_cid_for_routing,
     pull_quic_header,
 )
 from zoomies.packet.retry import encode_quic_retry, get_retry_integrity_tag
@@ -20,6 +21,7 @@ __all__ = [
     "decode_packet_number",
     "encode_quic_retry",
     "get_retry_integrity_tag",
+    "pull_destination_cid_for_routing",
     "pull_quic_header",
     "pull_quic_transport_parameters",
     "push_quic_transport_parameters",
