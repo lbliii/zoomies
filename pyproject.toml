@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "bengal-zoomies"
-version = "0.1.0"
+version = "0.1.1"
 description = "Free-threading-native QUIC and HTTP/3 for Python 3.14t — sans-I/O, typed"
 readme = "README.md"
 requires-python = ">=3.14"
