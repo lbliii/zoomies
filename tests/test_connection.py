@@ -200,7 +200,8 @@ def test_connection_parse_payload_frames_stream() -> None:
 
     config = QuicConfiguration(certificate=CERT, private_key=KEY)
     conn = QuicConnection(config)
-    result = conn._parse_payload_frames(plain_payload)
+    result: list = []
+    conn._parse_payload_frames(plain_payload, result)
 
     assert len(result) == 1
     assert result[0].stream_id == 4

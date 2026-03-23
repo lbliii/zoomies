@@ -1,55 +1,16 @@
 """QUIC packet protection — key derivation, AEAD, header protection (RFC 9001)."""
 
-import struct
-
-from cryptography.hazmat.primitives import hashes, hmac
+from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from cryptography.hazmat.primitives.kdf.hkdf import HKDFExpand
 
+from zoomies.crypto._hkdf import hkdf_expand_label, hkdf_extract
 from zoomies.packet.header import decode_packet_number
+from zoomies.primitives.types import QUIC_VERSION_1
 
 # RFC 9001 5.2: Initial salt for QUIC v1
 INITIAL_SALT_V1 = bytes.fromhex("38762cf7f55934b34d179ae6a4c80cadccbb7f0a")
-QUIC_VERSION_1 = 0x0000_0001
 SAMPLE_SIZE = 16
-
-
-def _hkdf_label(label: bytes, context: bytes, length: int) -> bytes:
-    """TLS 1.3 HKDF label format (RFC 8446 7.1)."""
-    full_label = b"tls13 " + label
-    return (
-        struct.pack("!HB", length, len(full_label))
-        + full_label
-        + struct.pack("!B", len(context))
-        + context
-    )
-
-
-def _hkdf_extract(
-    algorithm: type[hashes.HashAlgorithm],
-    salt: bytes,
-    key_material: bytes,
-) -> bytes:
-    """HKDF-Extract (RFC 5869)."""
-    h = hmac.HMAC(salt, algorithm())
-    h.update(key_material)
-    return h.finalize()
-
-
-def _hkdf_expand_label(
-    algorithm: type[hashes.HashAlgorithm],
-    secret: bytes,
-    label: bytes,
-    context: bytes,
-    length: int,
-) -> bytes:
-    """HKDF-Expand-Label (RFC 8446 7.1)."""
-    return HKDFExpand(
-        algorithm=algorithm(),
-        length=length,
-        info=_hkdf_label(label, context, length),
-    ).derive(secret)
 
 
 def derive_key_iv_hp(
@@ -58,16 +19,16 @@ def derive_key_iv_hp(
     version: int = QUIC_VERSION_1,
 ) -> tuple[bytes, bytes, bytes]:
     """Derive key, IV, and header protection key (RFC 9001 A.1)."""
-    key = _hkdf_expand_label(hashes.SHA256, secret, b"quic key", b"", 16)
-    iv = _hkdf_expand_label(hashes.SHA256, secret, b"quic iv", b"", 12)
-    hp = _hkdf_expand_label(hashes.SHA256, secret, b"quic hp", b"", 16)
+    key = hkdf_expand_label(hashes.SHA256, secret, b"quic key", b"", 16)
+    iv = hkdf_expand_label(hashes.SHA256, secret, b"quic iv", b"", 12)
+    hp = hkdf_expand_label(hashes.SHA256, secret, b"quic hp", b"", 16)
     return key, iv, hp
 
 
 def _quic_nonce(iv: bytes, packet_number: int) -> bytes:
     """QUIC nonce (RFC 9001 5.3): IV XOR with 4 zero bytes + 8-byte PN."""
-    padded_pn = bytes(4) + packet_number.to_bytes(8, "big")
-    return bytes(iv[i] ^ padded_pn[i] for i in range(12))
+    iv_int = int.from_bytes(iv, "big")
+    return (iv_int ^ packet_number).to_bytes(12, "big")
 
 
 def _aes_ecb_encrypt(key: bytes, data: bytes) -> bytes:
@@ -85,6 +46,7 @@ class CryptoContext:
         self._iv: bytes | None = None
         self._hp: bytes | None = None
         self._aead: AESGCM | None = None
+        self._hp_cipher: Cipher | None = None
 
     def setup(self, *, secret: bytes, version: int = QUIC_VERSION_1) -> None:
         """Set up from secret."""
@@ -93,6 +55,7 @@ class CryptoContext:
         self._iv = iv
         self._hp = hp
         self._aead = AESGCM(key)
+        self._hp_cipher = Cipher(algorithms.AES(hp), modes.ECB())
 
     def _encrypt_payload(self, plain: bytes, header: bytes, pn: int) -> bytes:
         """AEAD encrypt (RFC 9001 5.3)."""
@@ -108,6 +71,13 @@ class CryptoContext:
         nonce = _quic_nonce(self._iv, pn)
         return self._aead.decrypt(nonce, ciphertext, header)
 
+    def _hp_encrypt(self, data: bytes) -> bytes:
+        """AES-ECB encrypt for header protection (cached cipher)."""
+        if self._hp_cipher is None:
+            raise RuntimeError("Crypto not initialized")
+        encryptor = self._hp_cipher.encryptor()
+        return encryptor.update(data) + encryptor.finalize()
+
     def _apply_header_protection(
         self, header: bytes, payload: bytes, pn_len: int
     ) -> tuple[bytes, bytes]:
@@ -119,7 +89,7 @@ class CryptoContext:
             raise RuntimeError("Crypto not initialized")
         sample_offset = 4
         sample = payload[sample_offset : sample_offset + SAMPLE_SIZE]
-        mask = _aes_ecb_encrypt(self._hp, sample)
+        mask = self._hp_encrypt(sample)
         mask_first = mask[0] & (0x0F if (header[0] & 0x80) else 0x1F)
         masked_header = bytes([header[0] ^ mask_first]) + header[1:]
         masked_start = bytes(payload[i] ^ mask[1 + i] for i in range(pn_len))
@@ -136,7 +106,7 @@ class CryptoContext:
             raise RuntimeError("Crypto not initialized")
         sample_offset = encrypted_offset + 4
         sample = packet[sample_offset : sample_offset + SAMPLE_SIZE]
-        mask = _aes_ecb_encrypt(self._hp, sample)
+        mask = self._hp_encrypt(sample)
         mask_first = mask[0] & (0x0F if (packet[0] & 0x80) else 0x1F)
         plain_header = bytes([packet[0] ^ mask_first]) + packet[1:encrypted_offset]
         unmasked_start = bytes(packet[encrypted_offset + i] ^ mask[1 + i] for i in range(pn_len))
@@ -158,19 +128,19 @@ class CryptoPair:
         version: int = QUIC_VERSION_1,
     ) -> None:
         """Set up Initial keys from connection ID (RFC 9001 5.2)."""
-        initial_secret = _hkdf_extract(hashes.SHA256, INITIAL_SALT_V1, cid)
+        initial_secret = hkdf_extract(hashes.SHA256, INITIAL_SALT_V1, cid)
         if is_client:
             recv_label, send_label = b"server in", b"client in"
         else:
             recv_label, send_label = b"client in", b"server in"
-        recv_secret = _hkdf_expand_label(
+        recv_secret = hkdf_expand_label(
             hashes.SHA256,
             initial_secret,
             recv_label,
             b"",
             hashes.SHA256.digest_size,
         )
-        send_secret = _hkdf_expand_label(
+        send_secret = hkdf_expand_label(
             hashes.SHA256,
             initial_secret,
             send_label,
@@ -191,14 +161,14 @@ class CryptoPair:
             recv_label, send_label = b"s hs", b"c hs"
         else:
             recv_label, send_label = b"c hs", b"s hs"
-        recv_secret = _hkdf_expand_label(
+        recv_secret = hkdf_expand_label(
             hashes.SHA256,
             handshake_secret,
             recv_label,
             b"",
             hashes.SHA256.digest_size,
         )
-        send_secret = _hkdf_expand_label(
+        send_secret = hkdf_expand_label(
             hashes.SHA256,
             handshake_secret,
             send_label,
@@ -219,14 +189,14 @@ class CryptoPair:
             recv_label, send_label = b"s ap", b"c ap"
         else:
             recv_label, send_label = b"c ap", b"s ap"
-        recv_secret = _hkdf_expand_label(
+        recv_secret = hkdf_expand_label(
             hashes.SHA256,
             traffic_secret,
             recv_label,
             b"",
             hashes.SHA256.digest_size,
         )
-        send_secret = _hkdf_expand_label(
+        send_secret = hkdf_expand_label(
             hashes.SHA256,
             traffic_secret,
             send_label,

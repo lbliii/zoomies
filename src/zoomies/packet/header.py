@@ -4,7 +4,7 @@ from dataclasses import dataclass
 
 from zoomies.encoding import Buffer
 from zoomies.encoding.buffer import BufferReadError
-from zoomies.primitives.types import CONNECTION_ID_MAX_LEN
+from zoomies.primitives.types import CONNECTION_ID_MAX_LEN, QUIC_VERSION_1  # noqa: F401
 
 # RFC 9000 17.2: Long header has high bit set
 PACKET_LONG_HEADER = 0x80
@@ -16,8 +16,6 @@ PACKET_TYPE_INITIAL = 0
 PACKET_TYPE_ZERO_RTT = 1
 PACKET_TYPE_HANDSHAKE = 2
 PACKET_TYPE_RETRY = 3
-
-QUIC_VERSION_1 = 0x0000_0001
 QUIC_VERSION_NEGOTIATION = 0x0000_0000
 RETRY_INTEGRITY_TAG_SIZE = 16
 
@@ -74,7 +72,7 @@ def pull_destination_cid_for_routing(
             for cid in known_cids:
                 if cid and len(data) >= 1 + len(cid) and data[1 : 1 + len(cid)] == cid:
                     return cid
-    except (ValueError, BufferReadError):
+    except ValueError, BufferReadError:
         pass
     return None
 

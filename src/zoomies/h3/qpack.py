@@ -74,6 +74,10 @@ class Header:
     name: str
     value: str
 
+    def as_bytes(self) -> tuple[bytes, bytes]:
+        """Return (name, value) as bytes for H3 events."""
+        return (self.name.encode("ascii"), self.value.encode("ascii"))
+
 
 def _encode_literal(buf: Buffer, name: str, value: str) -> None:
     """Encode literal header (no name reference)."""
@@ -108,8 +112,20 @@ def encode_headers(headers: list[Header]) -> bytes:
 
 def encode_headers_from_bytes(headers: list[tuple[bytes, bytes]]) -> bytes:
     """Encode headers from bytes (ASGI-compatible) to QPACK format."""
-    hdrs = [Header(name=n.decode("ascii"), value=v.decode("ascii")) for n, v in headers]
-    return encode_headers(hdrs)
+    buf = Buffer()
+    for n, v in headers:
+        name_str = n.decode("ascii")
+        value_str = v.decode("ascii")
+        idx = _find_static(name_str, value_str)
+        if 0 <= idx < 63:
+            buf.push_uint8(0xC0 | idx)
+        else:
+            buf.push_uint8(0x20)
+            push_varint(buf, len(n))
+            buf.push_bytes(n)
+            push_varint(buf, len(v))
+            buf.push_bytes(v)
+    return buf.data
 
 
 def decode_headers(data: bytes) -> list[Header]:
@@ -129,9 +145,9 @@ def decode_headers(data: bytes) -> list[Header]:
     return result
 
 
+_STATIC_INDEX: dict[tuple[str, str], int] = {(n, v): i for i, (n, v) in enumerate(STATIC_TABLE)}
+
+
 def _find_static(name: str, value: str) -> int:
     """Find static table index, -1 if not found."""
-    for i, (n, v) in enumerate(STATIC_TABLE):
-        if n == name and v == value:
-            return i
-    return -1
+    return _STATIC_INDEX.get((name, value), -1)

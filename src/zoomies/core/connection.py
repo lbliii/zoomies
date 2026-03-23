@@ -1,11 +1,13 @@
 """QUIC server connection — sans-I/O state machine (RFC 9000)."""
 
+import bisect
 import os
 from enum import StrEnum
 
 from cryptography.exceptions import InvalidTag
 
 from zoomies.core.configuration import QuicConfiguration
+from zoomies.core.stream import Stream
 from zoomies.crypto import CryptoPair, QuicTlsContext
 from zoomies.encoding import Buffer
 from zoomies.events import (
@@ -17,7 +19,7 @@ from zoomies.events import (
     QuicEvent,
     StreamDataReceived,
 )
-from zoomies.frames.ack import pull_ack_frame
+from zoomies.frames.ack import AckFrame, RangeSet, pull_ack_frame, push_ack_frame
 from zoomies.frames.common import (
     PingFrame,
     pull_padding_frame,
@@ -46,9 +48,12 @@ from zoomies.packet.header import (
 )
 from zoomies.primitives import StreamId
 
-QUIC_VERSION_1 = 0x0000_0001
 INITIAL_HEADER_LEN = 18
 CRYPTO_FRAME_TYPE = 0x06
+HANDSHAKE_DONE_FRAME_TYPE = 0x1E
+MTU = 1200
+AEAD_TAG_SIZE = 16
+PN_SIZE = 4
 
 
 class ConnectionState(StrEnum):
@@ -73,8 +78,6 @@ def _merge_crypto_ranges(ranges: list[tuple[int, bytes]]) -> list[tuple[int, byt
             overlap = prev_end - start
             if overlap < len(data):
                 merged[-1] = (prev_start, prev_data + data[overlap:])
-            else:
-                pass
         else:
             merged.append((start, data))
     return merged
@@ -103,6 +106,15 @@ class QuicConnection:
         self._our_cids: set[bytes] = set()
         self._sequence_to_cid: dict[int, bytes] = {}
         self._next_cid_sequence = 0
+        # Stream state for reassembly and offset tracking
+        self._streams: dict[int, Stream] = {}
+        # ACK tracking — received packet numbers per space
+        self._initial_ack_ranges = RangeSet()
+        self._handshake_ack_ranges = RangeSet()
+        self._application_ack_ranges = RangeSet()
+        self._ack_needed_initial = False
+        self._ack_needed_handshake = False
+        self._ack_needed_application = False
 
     @property
     def our_cid(self) -> bytes:
@@ -113,6 +125,13 @@ class QuicConnection:
     def our_cids(self) -> tuple[bytes, ...]:
         """All active connection IDs we've issued (for CID-based routing)."""
         return tuple(self._our_cids)
+
+    def _get_or_create_stream(self, stream_id: StreamId) -> Stream:
+        """Get or create a stream by ID."""
+        sid = stream_id.value
+        if sid not in self._streams:
+            self._streams[sid] = Stream(stream_id)
+        return self._streams[sid]
 
     def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool = False) -> None:
         """Queue stream data for sending (H3StreamSender protocol)."""
@@ -138,23 +157,20 @@ class QuicConnection:
 
         if isinstance(header, LongHeader):
             if header.packet_type == PACKET_TYPE_INITIAL:
-                ev = self._handle_initial(data, buf, header)
-                events.extend(ev)
+                self._handle_initial(data, buf, header, events)
             elif header.packet_type == PACKET_TYPE_HANDSHAKE:
-                ev = self._handle_handshake(data, buf, header)
-                events.extend(ev)
+                self._handle_handshake(data, buf, header, events)
             elif header.packet_type == PACKET_TYPE_ZERO_RTT:
-                ev = self._handle_zero_rtt(data, buf, header)
-                events.extend(ev)
+                pass  # 0-RTT not yet implemented
         elif isinstance(header, ShortHeader):
-            ev = self._handle_short(data, buf, header)
-            events.extend(ev)
+            self._handle_short(data, buf, header, events)
 
         return events
 
-    def _handle_initial(self, data: bytes, buf: Buffer, header: LongHeader) -> list[QuicEvent]:
+    def _handle_initial(
+        self, data: bytes, buf: Buffer, header: LongHeader, events: list[QuicEvent]
+    ) -> None:
         """Handle Initial packet."""
-        events: list[QuicEvent] = []
         encrypted_offset = buf.tell()
 
         if self._state == ConnectionState.INITIAL:
@@ -171,74 +187,78 @@ class QuicConnection:
             )
 
         if not self._initial_crypto:
-            return events
+            return
 
         try:
-            _ph, plain_payload, _pn = self._initial_crypto.decrypt_packet(
+            _ph, plain_payload, pn = self._initial_crypto.decrypt_packet(
                 data, encrypted_offset, self._initial_pn
             )
+            self._initial_ack_ranges.add(pn)
+            self._ack_needed_initial = True
             self._state = ConnectionState.HANDSHAKE
             self._queue_initial_response()
-            events.extend(self._parse_payload_frames(plain_payload))
+            self._parse_payload_frames(plain_payload, events)
             self._feed_crypto_to_tls(events)
         except InvalidTag:
             self._queue_initial_response()
             self._state = ConnectionState.HANDSHAKE
-        return events
 
-    def _handle_handshake(self, data: bytes, buf: Buffer, header: LongHeader) -> list[QuicEvent]:
+    def _handle_handshake(
+        self, data: bytes, buf: Buffer, header: LongHeader, events: list[QuicEvent]
+    ) -> None:
         """Handle Handshake packet."""
-        events: list[QuicEvent] = []
         if not self._handshake_crypto:
-            return events
+            return
         encrypted_offset = buf.tell()
         try:
-            _ph, plain_payload, _pn = self._handshake_crypto.decrypt_packet(
+            _ph, plain_payload, pn = self._handshake_crypto.decrypt_packet(
                 data, encrypted_offset, self._handshake_pn
             )
-            events.extend(self._parse_payload_frames(plain_payload))
+            self._handshake_ack_ranges.add(pn)
+            self._ack_needed_handshake = True
+            self._parse_payload_frames(plain_payload, events)
             self._feed_crypto_to_tls(events)
         except InvalidTag:
             pass
-        return events
 
-    def _handle_zero_rtt(self, data: bytes, buf: Buffer, header: LongHeader) -> list[QuicEvent]:
-        """Handle 0-RTT packet. Stub: 0-RTT receive not yet implemented."""
-        return []
-
-    def _handle_short(self, data: bytes, buf: Buffer, header: ShortHeader) -> list[QuicEvent]:
+    def _handle_short(
+        self, data: bytes, buf: Buffer, header: ShortHeader, events: list[QuicEvent]
+    ) -> None:
         """Handle Short header (1-RTT)."""
-        events: list[QuicEvent] = []
         if self._state != ConnectionState.ONE_RTT or not self._one_rtt_crypto:
-            return events
+            return
         encrypted_offset = buf.tell()
         try:
-            _ph, plain_payload, _pn = self._one_rtt_crypto.decrypt_packet(
+            _ph, plain_payload, pn = self._one_rtt_crypto.decrypt_packet(
                 data, encrypted_offset, self._one_rtt_pn
             )
-            events.extend(self._parse_payload_frames(plain_payload))
+            self._application_ack_ranges.add(pn)
+            self._ack_needed_application = True
+            self._parse_payload_frames(plain_payload, events)
         except InvalidTag:
             pass
-        return events
 
     def _feed_crypto_to_tls(self, events: list[QuicEvent]) -> None:
         """Feed contiguous CRYPTO data to TLS, queue Handshake packets."""
         if not self._tls_ctx:
             return
         merged = _merge_crypto_ranges(self._crypto_recv)
-        to_feed = b""
+        parts: list[bytes] = []
         new_fed = self._crypto_fed
         for start, data in merged:
             if start <= new_fed:
                 end = start + len(data)
                 if end > new_fed:
-                    to_feed += data[new_fed - start :]
+                    parts.append(data[new_fed - start :])
                     new_fed = end
             else:
                 break
         self._crypto_fed = new_fed
-        if not to_feed:
+        # Prune consumed ranges
+        self._crypto_recv = [(s, d) for s, d in self._crypto_recv if s + len(d) > new_fed]
+        if not parts:
             return
+        to_feed = b"".join(parts)
         result = self._tls_ctx.receive(to_feed)
         if result.handshake_secret and not self._handshake_crypto:
             self._handshake_crypto = CryptoPair()
@@ -251,10 +271,12 @@ class QuicConnection:
             self._state = ConnectionState.ONE_RTT
             events.append(HandshakeComplete())
             self._queue_new_connection_id(events)
+            self._queue_handshake_done()
 
-    def _parse_payload_frames(self, payload: bytes, *, is_0rtt: bool = False) -> list[QuicEvent]:
+    def _parse_payload_frames(
+        self, payload: bytes, events: list[QuicEvent], *, is_0rtt: bool = False
+    ) -> None:
         """Parse QUIC frames from decrypted payload; collect CRYPTO for TLS."""
-        result: list[QuicEvent] = []
         buf = Buffer(data=payload)
         while not buf.eof():
             try:
@@ -270,28 +292,32 @@ class QuicConnection:
                     pull_ack_frame(buf)
                 elif first == CRYPTO_FRAME_TYPE:
                     frame = pull_crypto_frame(buf)
-                    self._crypto_recv.append((frame.offset, frame.data))
+                    bisect.insort(self._crypto_recv, (frame.offset, frame.data))
                 elif first == 0x19:
                     frame = pull_retire_connection_id(buf)
                     cid = self._sequence_to_cid.pop(frame.sequence, None)
                     if cid is not None:
                         self._our_cids.discard(cid)
-                        result.append(ConnectionIdRetired(connection_id=cid))
+                        events.append(ConnectionIdRetired(connection_id=cid))
+                elif first == HANDSHAKE_DONE_FRAME_TYPE:
+                    buf.pull_uint_var()  # consume frame type
                 elif (first & 0x08) == 0x08:
                     frame = pull_stream_frame(buf)
-                    result.append(
-                        StreamDataReceived(
-                            stream_id=frame.stream_id.value,
-                            data=frame.data,
-                            end_stream=frame.fin,
-                            is_0rtt=is_0rtt,
+                    stream = self._get_or_create_stream(frame.stream_id)
+                    delivered = stream.add_receive_frame(frame)
+                    if delivered or frame.fin:
+                        events.append(
+                            StreamDataReceived(
+                                stream_id=frame.stream_id.value,
+                                data=delivered,
+                                end_stream=stream.receive_complete,
+                                is_0rtt=is_0rtt,
+                            )
                         )
-                    )
                 else:
                     break
             except ValueError:
                 break
-        return result
 
     def _queue_new_connection_id(self, events: list[QuicEvent]) -> None:
         """Queue 1-RTT packet with NEW_CONNECTION_ID for connection migration."""
@@ -319,16 +345,39 @@ class QuicConnection:
         self._send_queue.append(encrypted)
         self._one_rtt_pn += 1
 
+    def _queue_handshake_done(self) -> None:
+        """Queue HANDSHAKE_DONE frame in a 1-RTT packet (RFC 9000 19.20)."""
+        if not self._one_rtt_crypto or not self._peer_cid:
+            return
+        payload_buf = Buffer()
+        payload_buf.push_uint_var(HANDSHAKE_DONE_FRAME_TYPE)
+        plain_payload = payload_buf.data
+        pn = self._one_rtt_pn
+        header_buf = Buffer()
+        push_short_header(header_buf, self._peer_cid, pn)
+        plain_header = header_buf.data
+        encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
+        self._send_queue.append(encrypted)
+        self._one_rtt_pn += 1
+
     def _queue_initial_response(self) -> None:
         """Queue server Initial packet."""
         if not self._initial_crypto or not self._our_cid or not self._peer_cid:
             return
         payload_buf = Buffer()
+        # Include ACK if we have received Initial packets
+        if len(self._initial_ack_ranges) > 0:
+            ack = AckFrame(ranges=tuple(self._initial_ack_ranges._ranges), delay=0)
+            buf_type = Buffer()
+            buf_type.push_uint_var(0x02)  # ACK frame type
+            payload_buf.push_bytes(buf_type.data)
+            push_ack_frame(payload_buf, ack)
+            self._ack_needed_initial = False
         push_ping_frame(payload_buf, PingFrame())
         plain_payload = payload_buf.data
         pn = self._initial_pn
         header_buf = Buffer()
-        ciphertext_len = 4 + len(plain_payload) + 16
+        ciphertext_len = PN_SIZE + len(plain_payload) + AEAD_TAG_SIZE
         push_initial_packet_header(
             header_buf,
             destination_cid=self._peer_cid,
@@ -346,18 +395,17 @@ class QuicConnection:
         if not self._handshake_crypto or not self._our_cid or not self._peer_cid:
             return
         offset = 0
-        mtu = 1200
         while offset < len(tls_data):
-            chunk = tls_data[offset : offset + mtu - 100]
+            chunk = tls_data[offset : offset + MTU - 100]
             if not chunk:
                 break
             payload_buf = Buffer()
             push_crypto_frame(payload_buf, CryptoFrame(offset=offset, data=chunk))
             plain_payload = payload_buf.data
             pn = self._handshake_pn
-            pn_bytes = pn.to_bytes(4, "big")
+            pn_bytes = pn.to_bytes(PN_SIZE, "big")
             plain = pn_bytes + plain_payload
-            ciphertext_len = len(plain) + 16
+            ciphertext_len = len(plain) + AEAD_TAG_SIZE
             header_buf = Buffer()
             push_handshake_packet_header(
                 header_buf,
@@ -371,37 +419,102 @@ class QuicConnection:
             self._handshake_pn += 1
             offset += len(chunk)
 
+    def _build_ack_packet(self, ack_ranges: RangeSet, crypto: CryptoPair, pn: int) -> bytes:
+        """Build a 1-RTT packet containing an ACK frame."""
+        payload_buf = Buffer()
+        ack = AckFrame(ranges=tuple(ack_ranges._ranges), delay=0)
+        buf_type = Buffer()
+        buf_type.push_uint_var(0x02)
+        payload_buf.push_bytes(buf_type.data)
+        push_ack_frame(payload_buf, ack)
+        plain_payload = payload_buf.data
+        header_buf = Buffer()
+        push_short_header(header_buf, self._peer_cid, pn)
+        plain_header = header_buf.data
+        return crypto.encrypt_packet(plain_header, plain_payload, pn)
+
     def send_datagrams(self) -> list[bytes]:
         """Return queued datagrams to send."""
-        out = self._send_queue[:]
-        self._send_queue.clear()
+        out, self._send_queue = self._send_queue, []
+
+        # Generate pending ACKs
+        if (
+            self._ack_needed_handshake
+            and self._handshake_crypto
+            and len(self._handshake_ack_ranges) > 0
+        ):
+            ack_packet = self._build_ack_packet(
+                self._handshake_ack_ranges, self._handshake_crypto, self._handshake_pn
+            )
+            out.append(ack_packet)
+            self._handshake_pn += 1
+            self._ack_needed_handshake = False
+
+        if (
+            self._ack_needed_application
+            and self._one_rtt_crypto
+            and len(self._application_ack_ranges) > 0
+        ):
+            ack_packet = self._build_ack_packet(
+                self._application_ack_ranges, self._one_rtt_crypto, self._one_rtt_pn
+            )
+            out.append(ack_packet)
+            self._one_rtt_pn += 1
+            self._ack_needed_application = False
+
         if self._state == ConnectionState.ONE_RTT and self._stream_send_queue:
             out.extend(self._flush_stream_send_queue())
+
         return out
 
     def _flush_stream_send_queue(self) -> list[bytes]:
-        """Build Short header packets from _stream_send_queue."""
+        """Build Short header packets from _stream_send_queue, coalescing to MTU."""
         if not self._one_rtt_crypto or not self._peer_cid:
             return []
         packets: list[bytes] = []
+        # Coalesce multiple small STREAM frames into single packets
+        payload_buf = Buffer()
+        max_payload = MTU - 30 - AEAD_TAG_SIZE  # header + PN + AEAD overhead
+
         for stream_id, data, end_stream in self._stream_send_queue:
-            payload_buf = Buffer()
+            stream = self._get_or_create_stream(StreamId(stream_id))
+            offset = stream._send.sent_end
+
+            frame_buf = Buffer()
             push_stream_frame(
-                payload_buf,
+                frame_buf,
                 StreamFrame(
                     stream_id=StreamId(stream_id),
-                    offset=0,
+                    offset=offset,
                     data=data,
                     fin=end_stream,
                 ),
             )
-            plain_payload = payload_buf.data
-            pn = self._one_rtt_pn
-            header_buf = Buffer()
-            push_short_header(header_buf, self._peer_cid, pn)
-            plain_header = header_buf.data
-            encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
-            packets.append(encrypted)
-            self._one_rtt_pn += 1
+            frame_bytes = frame_buf.data
+            stream._send.advance(len(data), fin=end_stream)
+
+            # If this frame doesn't fit in current packet, flush current
+            if len(payload_buf.data) > 0 and len(payload_buf.data) + len(frame_bytes) > max_payload:
+                packets.append(self._encrypt_short_packet(payload_buf.data))
+                payload_buf = Buffer()
+
+            payload_buf.push_bytes(frame_bytes)
+
+        # Flush remaining
+        if len(payload_buf.data) > 0:
+            packets.append(self._encrypt_short_packet(payload_buf.data))
+
         self._stream_send_queue.clear()
         return packets
+
+    def _encrypt_short_packet(self, plain_payload: bytes) -> bytes:
+        """Encrypt a short header packet with the given payload."""
+        if not self._one_rtt_crypto:
+            raise RuntimeError("1-RTT crypto not initialized")
+        pn = self._one_rtt_pn
+        header_buf = Buffer()
+        push_short_header(header_buf, self._peer_cid, pn)
+        plain_header = header_buf.data
+        encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
+        self._one_rtt_pn += 1
+        return encrypted

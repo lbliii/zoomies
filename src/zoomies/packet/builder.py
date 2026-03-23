@@ -6,9 +6,8 @@ from zoomies.packet.header import (
     PACKET_LONG_HEADER,
     PACKET_TYPE_HANDSHAKE,
     PACKET_TYPE_INITIAL,
+    QUIC_VERSION_1,
 )
-
-QUIC_VERSION_1 = 0x0000_0001
 
 
 def _encode_long_type(packet_type: int) -> int:

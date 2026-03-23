@@ -1,0 +1,201 @@
+{
+  "version": "1.0",
+  "updated_at": "2026-03-23T21:40:20.940301+00:00",
+  "files": {
+    "src/zoomies/core/connection.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/core/stream.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/crypto/tls.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/crypto/quic_crypto.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/h3/connection.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/h3/qpack.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/encoding/buffer.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/frames/ack.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/frames/stream.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/frames/crypto.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/packet/header.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/packet/builder.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/primitives/types.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/contracts/keys.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    },
+    "src/zoomies/events.py": {
+      "skills_applied": [
+        {
+          "skill": "layered-review",
+          "command": "::lr analyze zoomies from a competitive perspective",
+          "at": "2026-03-23T21:40:20.911435+00:00",
+          "source": "explicit"
+        }
+      ],
+      "last_revised": null,
+      "last_audited": null,
+      "last_polished": null
+    }
+  }
+}
