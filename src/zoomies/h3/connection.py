@@ -115,9 +115,7 @@ class H3Connection:
                 events.append(
                     H3HeadersReceived(
                         stream_id=stream_id,
-                        headers=[
-                            (h.name.encode("ascii"), h.value.encode("ascii")) for h in decoded
-                        ],
+                        headers=[h.as_bytes() for h in decoded],
                         end_stream=end_stream and len(buf) == 0,
                         is_0rtt=is_0rtt,
                     )

@@ -5,16 +5,15 @@ Supports X25519 key exchange and ECDSA P-256 certificate auth.
 """
 
 import os
-import struct
 from dataclasses import dataclass
 from enum import StrEnum
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, hmac, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, x25519
-from cryptography.hazmat.primitives.kdf.hkdf import HKDFExpand
 from cryptography.hazmat.primitives.serialization import Encoding
 
+from zoomies.crypto._hkdf import hkdf_expand_label, hkdf_extract
 from zoomies.encoding import Buffer
 from zoomies.encoding.buffer import BufferReadError
 
@@ -58,26 +57,14 @@ class TlsHandshakeResult:
     traffic_secret: bytes | None = None
 
 
-def _hkdf_label(label: bytes, context: bytes, length: int) -> bytes:
-    """TLS 1.3 HKDF label (RFC 8446 7.1)."""
-    full = b"tls13 " + label
-    return struct.pack("!HB", length, len(full)) + full + struct.pack("!B", len(context)) + context
-
-
 def _hkdf_expand_label(secret: bytes, label: bytes, context: bytes, length: int) -> bytes:
-    """HKDF-Expand-Label (RFC 8446 7.1)."""
-    return HKDFExpand(
-        algorithm=hashes.SHA256(),
-        length=length,
-        info=_hkdf_label(label, context, length),
-    ).derive(secret)
+    """HKDF-Expand-Label (RFC 8446 7.1) — SHA256 convenience wrapper."""
+    return hkdf_expand_label(hashes.SHA256, secret, label, context, length)
 
 
 def _hkdf_extract(salt: bytes, key_material: bytes) -> bytes:
-    """HKDF-Extract."""
-    h = hmac.HMAC(salt, hashes.SHA256())
-    h.update(key_material)
-    return h.finalize()
+    """HKDF-Extract — SHA256 convenience wrapper."""
+    return hkdf_extract(hashes.SHA256, salt, key_material)
 
 
 def _pull_block(buf: Buffer, capacity: int) -> bytes:

@@ -2,12 +2,12 @@
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+from zoomies.primitives.types import QUIC_VERSION_1
+
 # RFC 9001 5.8: Retry packet integrity (QUIC v1)
 RETRY_AEAD_KEY_V1 = bytes.fromhex("be0c690b9f66575a1d766b54e368c84e")
 RETRY_AEAD_NONCE_V1 = bytes.fromhex("461599d35d632bf2239825bb")
 RETRY_INTEGRITY_TAG_SIZE = 16
-
-QUIC_VERSION_1 = 0x0000_0001
 
 
 def get_retry_integrity_tag(

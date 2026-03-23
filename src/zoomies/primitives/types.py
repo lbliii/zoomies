@@ -15,6 +15,9 @@ PACKET_NUMBER_MAX = 2**62 - 1
 CONNECTION_ID_MIN_LEN = 0
 CONNECTION_ID_MAX_LEN = 20
 
+# QUIC version 1 (RFC 9000)
+QUIC_VERSION_1 = 0x0000_0001
+
 
 @dataclass(frozen=True, slots=True)
 class ConnectionId:

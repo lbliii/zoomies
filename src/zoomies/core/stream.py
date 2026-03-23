@@ -1,5 +1,6 @@
 """QUIC stream receive/send state - reassembly, FIN, flow control (RFC 9000 2-3)."""
 
+import bisect
 from dataclasses import dataclass, field
 
 from zoomies.frames.stream import StreamFrame
@@ -30,8 +31,7 @@ class StreamReceiveState:
         if frame.fin:
             self._fin_at = offset + len(data)
         if data:
-            self._chunks.append((offset, data))
-            self._chunks.sort(key=lambda c: c[0])
+            bisect.insort(self._chunks, (offset, data))
         return self._deliver_contiguous()
 
     def _deliver_contiguous(self) -> bytes:
