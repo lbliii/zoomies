@@ -26,7 +26,7 @@ show_recent_posts: false
 
 **Free-threading native. Typed. Pure Python.**
 
-Zoomies is a sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114). Native to the b-stack, it has no b-stack dependencies and works anywhere — pure Python, cryptography only, free-threaded Python 3.14t.
+Zoomies is a sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114). Native to the b-stack, it has no b-stack dependencies and works anywhere — pure Python, cryptography only, free-threaded Python 3.14t. Full TLS 1.3 handshake, loss recovery (RFC 9002), and congestion control.
 
 ```python
 from zoomies.core import QuicConnection, QuicConfiguration
