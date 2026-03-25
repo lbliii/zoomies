@@ -16,10 +16,14 @@ def test_connection_integration_placeholder() -> None:
     TODO: Use pre-recorded aioquic client Initial or loopback datagrams
     to verify full handshake completion (HandshakeComplete when 1-RTT ready).
     """
+    from zoomies.events import DecryptionFailed
+
     config = QuicConfiguration(certificate=CERT, private_key=KEY)
     conn = QuicConnection(config)
     # Minimal Initial packet (unencrypted payload — decrypt will fail)
     pkt = bytes.fromhex("c300000001088394c8f03e51570808f067a5502a4262b500003200") + b"\x00" * 50
-    conn.datagram_received(pkt, ("127.0.0.1", 443))
+    events = conn.datagram_received(pkt, ("127.0.0.1", 443))
     datagrams = conn.send_datagrams()
-    assert len(datagrams) >= 1
+    # Unencrypted packet fails decrypt — no response (correct: no amplification)
+    assert datagrams == []
+    assert any(isinstance(e, DecryptionFailed) for e in events)

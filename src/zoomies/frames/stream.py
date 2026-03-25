@@ -1,4 +1,4 @@
-"""STREAM frame (RFC 9000 19.8)."""
+"""STREAM, STOP_SENDING, RESET_STREAM frames (RFC 9000 19.4, 19.5, 19.8)."""
 
 from dataclasses import dataclass
 
@@ -47,3 +47,62 @@ def push_stream_frame(buf: Buffer, frame: StreamFrame) -> None:
         push_varint(buf, frame.offset)
     push_varint(buf, len(frame.data))
     buf.push_bytes(frame.data)
+
+
+# --- RESET_STREAM (RFC 9000 19.4) ---
+
+
+@dataclass(frozen=True, slots=True)
+class ResetStreamFrame:
+    """RESET_STREAM frame — abruptly terminate sending on a stream."""
+
+    stream_id: StreamId
+    error_code: int
+    final_size: int
+
+
+def pull_reset_stream_frame(buf: Buffer) -> ResetStreamFrame:
+    """Parse RESET_STREAM frame (type 0x04)."""
+    frame_type = pull_varint(buf)
+    if frame_type != 0x04:
+        raise ValueError("Not a RESET_STREAM frame")
+    stream_id = StreamId(value=pull_varint(buf))
+    error_code = pull_varint(buf)
+    final_size = pull_varint(buf)
+    return ResetStreamFrame(stream_id=stream_id, error_code=error_code, final_size=final_size)
+
+
+def push_reset_stream_frame(buf: Buffer, frame: ResetStreamFrame) -> None:
+    """Serialize RESET_STREAM frame."""
+    push_varint(buf, 0x04)
+    push_varint(buf, frame.stream_id.value)
+    push_varint(buf, frame.error_code)
+    push_varint(buf, frame.final_size)
+
+
+# --- STOP_SENDING (RFC 9000 19.5) ---
+
+
+@dataclass(frozen=True, slots=True)
+class StopSendingFrame:
+    """STOP_SENDING frame — request peer to stop sending on a stream."""
+
+    stream_id: StreamId
+    error_code: int
+
+
+def pull_stop_sending_frame(buf: Buffer) -> StopSendingFrame:
+    """Parse STOP_SENDING frame (type 0x05)."""
+    frame_type = pull_varint(buf)
+    if frame_type != 0x05:
+        raise ValueError("Not a STOP_SENDING frame")
+    stream_id = StreamId(value=pull_varint(buf))
+    error_code = pull_varint(buf)
+    return StopSendingFrame(stream_id=stream_id, error_code=error_code)
+
+
+def push_stop_sending_frame(buf: Buffer, frame: StopSendingFrame) -> None:
+    """Serialize STOP_SENDING frame."""
+    push_varint(buf, 0x05)
+    push_varint(buf, frame.stream_id.value)
+    push_varint(buf, frame.error_code)

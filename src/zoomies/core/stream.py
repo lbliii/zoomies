@@ -82,6 +82,8 @@ class StreamSendState:
     _sent_end: int = 0
     _fin_sent: bool = False
     _max_stream_data: int = 0
+    _send_buffer: bytearray = field(default_factory=bytearray)
+    _buffer_start: int = 0  # offset in stream of first byte in buffer
 
     @property
     def sent_end(self) -> int:
@@ -90,6 +92,17 @@ class StreamSendState:
     @property
     def fin_sent(self) -> bool:
         return self._fin_sent
+
+    def write(self, data: bytes) -> None:
+        """Append data to the send buffer for potential retransmission."""
+        self._send_buffer.extend(data)
+
+    def get_data(self, offset: int, length: int) -> bytes:
+        """Retrieve previously buffered data by stream offset for retransmission."""
+        buf_offset = offset - self._buffer_start
+        if buf_offset < 0 or buf_offset + length > len(self._send_buffer):
+            return b""
+        return bytes(self._send_buffer[buf_offset : buf_offset + length])
 
     def advance(self, length: int, fin: bool = False) -> None:
         self._sent_end += length
