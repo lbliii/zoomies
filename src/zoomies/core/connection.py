@@ -62,6 +62,7 @@ from zoomies.recovery import (
     SentCryptoFrame,
     SentHandshakeDoneFrame,
     SentNewConnectionIdFrame,
+    SentPacket,
     SentPingFrame,
     SentStreamFrame,
     detect_lost_packets,
@@ -369,9 +370,7 @@ class QuicConnection:
                     frame = pull_stream_frame(buf)
                     stream = self._get_or_create_stream(frame.stream_id)
                     if not stream._recv.flow_control_ok(frame.offset, len(frame.data)):
-                        self._close_with_error(
-                            0x03, "Flow control limit exceeded", events
-                        )
+                        self._close_with_error(0x03, "Flow control limit exceeded", events)
                         return
                     delivered = stream.add_receive_frame(frame)
                     if delivered or frame.fin:
@@ -428,13 +427,9 @@ class QuicConnection:
             self._cc.on_packets_lost(lost, self._now)
             self._retransmit_lost(lost)
 
-    def _retransmit_lost(self, lost: list[object]) -> None:
+    def _retransmit_lost(self, lost: list[SentPacket]) -> None:
         """Re-queue retransmittable frames from lost packets."""
-        from zoomies.recovery.sent_packet import SentPacket as _SentPacket
-
         for pkt in lost:
-            if not isinstance(pkt, _SentPacket):
-                continue
             for frame in pkt.frames:
                 if isinstance(frame, SentCryptoFrame):
                     self._crypto_retransmit.append(
@@ -445,9 +440,7 @@ class QuicConnection:
                     stream = self._get_or_create_stream(StreamId(frame.stream_id))
                     data = stream._send.get_data(frame.offset, frame.length)
                     if data:
-                        self._stream_send_queue.append(
-                            (frame.stream_id, data, frame.fin)
-                        )
+                        self._stream_send_queue.append((frame.stream_id, data, frame.fin))
                 elif isinstance(frame, SentHandshakeDoneFrame):
                     self._handshake_done_pending = True
                 # SentAckFrame: NOT retransmitted (RFC 9002)
@@ -675,9 +668,7 @@ class QuicConnection:
             self._probe_needed = False
             payload_buf = Buffer()
             push_ping_frame(payload_buf, PingFrame())
-            out.append(
-                self._encrypt_short_packet(payload_buf.data, (SentPingFrame(),))
-            )
+            out.append(self._encrypt_short_packet(payload_buf.data, (SentPingFrame(),)))
 
         if self._state == ConnectionState.ONE_RTT and self._stream_send_queue:
             out.extend(self._flush_stream_send_queue())
@@ -740,9 +731,7 @@ class QuicConnection:
 
             # If this frame doesn't fit in current packet, flush current
             if len(payload_buf.data) > 0 and len(payload_buf.data) + len(frame_bytes) > max_payload:
-                packets.append(
-                    self._encrypt_short_packet(payload_buf.data, tuple(current_frames))
-                )
+                packets.append(self._encrypt_short_packet(payload_buf.data, tuple(current_frames)))
                 payload_buf = Buffer()
                 current_frames = []
 
@@ -751,9 +740,7 @@ class QuicConnection:
 
         # Flush remaining
         if len(payload_buf.data) > 0:
-            packets.append(
-                self._encrypt_short_packet(payload_buf.data, tuple(current_frames))
-            )
+            packets.append(self._encrypt_short_packet(payload_buf.data, tuple(current_frames)))
 
         self._stream_send_queue = deferred
         return packets
@@ -779,10 +766,7 @@ class QuicConnection:
         self,
         plain_payload: bytes,
         frames: tuple[
-            SentStreamFrame
-            | SentHandshakeDoneFrame
-            | SentNewConnectionIdFrame
-            | SentPingFrame,
+            SentStreamFrame | SentHandshakeDoneFrame | SentNewConnectionIdFrame | SentPingFrame,
             ...,
         ] = (),
     ) -> bytes:
@@ -817,9 +801,7 @@ class QuicConnection:
         if self._state == ConnectionState.CLOSED:
             return
         reason_bytes = reason.encode("utf-8") if reason else b""
-        frame = ConnectionCloseFrame(
-            error_code=error_code, reason_phrase=reason_bytes
-        )
+        frame = ConnectionCloseFrame(error_code=error_code, reason_phrase=reason_bytes)
         payload_buf = Buffer()
         push_connection_close(payload_buf, frame)
         plain_payload = payload_buf.data
@@ -839,9 +821,7 @@ class QuicConnection:
                 payload_length=ciphertext_len,
             )
             plain_header = header_buf.data
-            encrypted = self._handshake_crypto.encrypt_packet(
-                plain_header, plain_payload, pn
-            )
+            encrypted = self._handshake_crypto.encrypt_packet(plain_header, plain_payload, pn)
             self._send_queue.append(encrypted)
             self._handshake_pn += 1
 
@@ -901,9 +881,7 @@ class QuicConnection:
 
         return events
 
-    def _close_with_error(
-        self, error_code: int, reason: str, events: list[QuicEvent]
-    ) -> None:
+    def _close_with_error(self, error_code: int, reason: str, events: list[QuicEvent]) -> None:
         """Close connection with error, queue CONNECTION_CLOSE, emit event."""
         if self._state == ConnectionState.CLOSED:
             return

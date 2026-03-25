@@ -192,7 +192,8 @@ def test_key_update_interop() -> None:
     plain_header = b"\x40" + CLIENT_CID
     _, payload_pre, _ = client.decrypt_packet(
         server.encrypt_packet(plain_header, b"before", 0),
-        len(plain_header), 0,
+        len(plain_header),
+        0,
     )
     assert payload_pre == b"before"
 
@@ -205,7 +206,8 @@ def test_key_update_interop() -> None:
     # Post-update: still works
     _, payload_post, _ = client.decrypt_packet(
         server.encrypt_packet(plain_header, b"after", 1),
-        len(plain_header), 1,
+        len(plain_header),
+        1,
     )
     assert payload_post == b"after"
 

@@ -69,9 +69,7 @@ def pull_reset_stream_frame(buf: Buffer) -> ResetStreamFrame:
     stream_id = StreamId(value=pull_varint(buf))
     error_code = pull_varint(buf)
     final_size = pull_varint(buf)
-    return ResetStreamFrame(
-        stream_id=stream_id, error_code=error_code, final_size=final_size
-    )
+    return ResetStreamFrame(stream_id=stream_id, error_code=error_code, final_size=final_size)
 
 
 def push_reset_stream_frame(buf: Buffer, frame: ResetStreamFrame) -> None:

@@ -205,9 +205,7 @@ def test_retransmission_produces_valid_packets() -> None:
 def test_idle_timeout_still_works_with_recovery() -> None:
     """Idle timeout closes connection even when recovery machinery is active."""
     conn = _make_server_conn()
-    conn._config = QuicConfiguration(
-        certificate=CERT, private_key=KEY, idle_timeout=5.0
-    )
+    conn._config = QuicConfiguration(certificate=CERT, private_key=KEY, idle_timeout=5.0)
     conn._last_activity = 10.0
 
     conn.handle_timer(now=15.1)

@@ -82,8 +82,12 @@ def test_loss_detection_never_declares_above_acked(
     sent: dict[int, SentPacket] = {}
     for pn in range(num_packets):
         sent[pn] = SentPacket(
-            packet_number=pn, sent_time=1.0, sent_bytes=100,
-            ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+            packet_number=pn,
+            sent_time=1.0,
+            sent_bytes=100,
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentPingFrame(),),
         )
 
     lost = detect_lost_packets(sent, largest_acked, now=100.0, rtt=rtt)
@@ -107,8 +111,12 @@ def test_loss_detection_removes_from_dict(
     sent: dict[int, SentPacket] = {}
     for pn in range(num_packets):
         sent[pn] = SentPacket(
-            packet_number=pn, sent_time=1.0, sent_bytes=100,
-            ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+            packet_number=pn,
+            sent_time=1.0,
+            sent_bytes=100,
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentPingFrame(),),
         )
 
     lost = detect_lost_packets(sent, largest_acked, now=100.0, rtt=rtt)
@@ -123,6 +131,7 @@ def test_loss_delay_at_least_granularity(rtt_sample: float) -> None:
     rtt = RttEstimator()
     rtt.update(latest_rtt=rtt_sample)
     from zoomies.recovery.rtt import TIMER_GRANULARITY
+
     assert loss_delay(rtt) >= TIMER_GRANULARITY
 
 
@@ -130,9 +139,7 @@ def test_loss_delay_at_least_granularity(rtt_sample: float) -> None:
 
 
 @given(
-    ack_pattern=st.lists(
-        st.integers(min_value=0, max_value=9), min_size=1, max_size=10
-    ),
+    ack_pattern=st.lists(st.integers(min_value=0, max_value=9), min_size=1, max_size=10),
 )
 @settings(max_examples=200)
 def test_packet_space_ack_never_double_counts(ack_pattern: list[int]) -> None:
@@ -140,8 +147,12 @@ def test_packet_space_ack_never_double_counts(ack_pattern: list[int]) -> None:
     space = PacketSpace()
     for pn in range(10):
         space.on_packet_sent(
-            packet_number=pn, sent_time=1.0, sent_bytes=100,
-            ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+            packet_number=pn,
+            sent_time=1.0,
+            sent_bytes=100,
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentPingFrame(),),
         )
 
     # ACK in the given pattern (may contain duplicates)
@@ -163,15 +174,17 @@ def test_packet_space_ack_never_double_counts(ack_pattern: list[int]) -> None:
     ),
 )
 @settings(max_examples=200)
-def test_packet_space_largest_acked_monotonic(
-    ranges: list[tuple[int, int]]
-) -> None:
+def test_packet_space_largest_acked_monotonic(ranges: list[tuple[int, int]]) -> None:
     """largest_acked_packet only grows, never shrinks."""
     space = PacketSpace()
     for pn in range(15):
         space.on_packet_sent(
-            packet_number=pn, sent_time=1.0, sent_bytes=100,
-            ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+            packet_number=pn,
+            sent_time=1.0,
+            sent_bytes=100,
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentPingFrame(),),
         )
 
     prev_largest = None
@@ -204,10 +217,16 @@ def test_cc_bytes_in_flight_non_negative(
 
     for i, sb in enumerate(sent_bytes):
         cc.on_packet_sent(sb)
-        packets.append(SentPacket(
-            packet_number=i, sent_time=1.0 + i * 0.01, sent_bytes=sb,
-            ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
-        ))
+        packets.append(
+            SentPacket(
+                packet_number=i,
+                sent_time=1.0 + i * 0.01,
+                sent_bytes=sb,
+                ack_eliciting=True,
+                in_flight=True,
+                frames=(SentPingFrame(),),
+            )
+        )
 
     # ACK some (avoid out-of-range)
     to_ack = [packets[i] for i in set(ack_indices) if i < len(packets)]
@@ -234,10 +253,16 @@ def test_cc_cwnd_never_below_minimum(sent_bytes: list[int]) -> None:
 
     for i, sb in enumerate(sent_bytes):
         cc.on_packet_sent(sb)
-        packets.append(SentPacket(
-            packet_number=i, sent_time=1.0, sent_bytes=sb,
-            ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
-        ))
+        packets.append(
+            SentPacket(
+                packet_number=i,
+                sent_time=1.0,
+                sent_bytes=sb,
+                ack_eliciting=True,
+                in_flight=True,
+                frames=(SentPingFrame(),),
+            )
+        )
 
     # Multiple loss events
     for j in range(5):

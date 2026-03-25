@@ -102,9 +102,7 @@ def test_handshake_invalid_tag_emits_decryption_failed() -> None:
 
 def test_connection_close_frame_round_trip() -> None:
     """CONNECTION_CLOSE frame serializes and parses correctly."""
-    frame = ConnectionCloseFrame(
-        error_code=0x0A, frame_type=0x06, reason_phrase=b"test error"
-    )
+    frame = ConnectionCloseFrame(error_code=0x0A, frame_type=0x06, reason_phrase=b"test error")
     buf = Buffer()
     push_connection_close(buf, frame)
 

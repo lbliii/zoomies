@@ -37,9 +37,7 @@ class PacketSpace:
             self.ack_eliciting_in_flight += 1
         return pkt
 
-    def on_ack_received(
-        self, ack_ranges: list[range]
-    ) -> list[SentPacket]:
+    def on_ack_received(self, ack_ranges: list[range]) -> list[SentPacket]:
         """Process ACK ranges; returns newly acknowledged packets.
 
         Args:
@@ -55,9 +53,7 @@ class PacketSpace:
                 if pkt is not None:
                     newly_acked.append(pkt)
                     if pkt.ack_eliciting and pkt.in_flight:
-                        self.ack_eliciting_in_flight = max(
-                            0, self.ack_eliciting_in_flight - 1
-                        )
+                        self.ack_eliciting_in_flight = max(0, self.ack_eliciting_in_flight - 1)
 
         if newly_acked:
             largest = max(p.packet_number for p in newly_acked)

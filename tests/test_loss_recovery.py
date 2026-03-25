@@ -99,8 +99,12 @@ def test_detect_lost_pn_threshold_exact_boundary() -> None:
     sent: dict[int, SentPacket] = {}
     for pn in range(4):
         sent[pn] = SentPacket(
-            packet_number=pn, sent_time=1.0, sent_bytes=100,
-            ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+            packet_number=pn,
+            sent_time=1.0,
+            sent_bytes=100,
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentPingFrame(),),
         )
     # largest_acked=3, gap for pn=0 is 3 (exactly PACKET_THRESHOLD)
     lost = detect_lost_packets(sent, largest_acked=3, now=1.0, rtt=rtt)
@@ -117,13 +121,21 @@ def test_detect_lost_time_threshold() -> None:
     sent: dict[int, SentPacket] = {}
     # Packet 0 sent at time 1.0
     sent[0] = SentPacket(
-        packet_number=0, sent_time=1.0, sent_bytes=100,
-        ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+        packet_number=0,
+        sent_time=1.0,
+        sent_bytes=100,
+        ack_eliciting=True,
+        in_flight=True,
+        frames=(SentPingFrame(),),
     )
     # Packet 1 sent recently
     sent[1] = SentPacket(
-        packet_number=1, sent_time=1.0 + delay + 0.001, sent_bytes=100,
-        ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+        packet_number=1,
+        sent_time=1.0 + delay + 0.001,
+        sent_bytes=100,
+        ack_eliciting=True,
+        in_flight=True,
+        frames=(SentPingFrame(),),
     )
     # largest_acked = 1, now is well past delay for packet 0
     now = 1.0 + delay + 0.01
@@ -140,8 +152,12 @@ def test_detect_lost_no_false_positives() -> None:
     sent: dict[int, SentPacket] = {}
     # Packet 0 sent very recently, gap = 1 (< PACKET_THRESHOLD)
     sent[0] = SentPacket(
-        packet_number=0, sent_time=1.0, sent_bytes=100,
-        ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+        packet_number=0,
+        sent_time=1.0,
+        sent_bytes=100,
+        ack_eliciting=True,
+        in_flight=True,
+        frames=(SentPingFrame(),),
     )
     lost = detect_lost_packets(sent, largest_acked=1, now=1.001, rtt=rtt)
     assert lost == []
@@ -154,8 +170,12 @@ def test_detect_lost_does_not_touch_above_acked() -> None:
     rtt.update(latest_rtt=0.100)
     sent: dict[int, SentPacket] = {
         5: SentPacket(
-            packet_number=5, sent_time=0.5, sent_bytes=100,
-            ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+            packet_number=5,
+            sent_time=0.5,
+            sent_bytes=100,
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentPingFrame(),),
         )
     }
     lost = detect_lost_packets(sent, largest_acked=4, now=100.0, rtt=rtt)
@@ -240,9 +260,7 @@ def test_pto_fires_and_sends_ping() -> None:
     """When PTO fires, handle_timer sets probe_needed, send_datagrams sends PING."""
     conn = _make_server_conn()
     conn._last_activity = 10.0
-    conn._config = QuicConfiguration(
-        certificate=CERT, private_key=KEY, idle_timeout=60.0
-    )
+    conn._config = QuicConfiguration(certificate=CERT, private_key=KEY, idle_timeout=60.0)
 
     # Send a packet so there's an ack-eliciting in flight
     conn.send_stream_data(stream_id=0, data=b"hello", end_stream=False)
@@ -270,9 +288,7 @@ def test_pto_backoff_doubles() -> None:
     """PTO uses exponential backoff (2^pto_count)."""
     conn = _make_server_conn()
     conn._last_activity = 10.0
-    conn._config = QuicConfiguration(
-        certificate=CERT, private_key=KEY, idle_timeout=60.0
-    )
+    conn._config = QuicConfiguration(certificate=CERT, private_key=KEY, idle_timeout=60.0)
 
     conn.send_stream_data(stream_id=0, data=b"hello", end_stream=False)
     conn.send_datagrams(now=10.0)
@@ -342,8 +358,11 @@ def test_retransmit_lost_handshake_done() -> None:
     conn = _make_server_conn()
     lost = [
         SentPacket(
-            packet_number=0, sent_time=10.0, sent_bytes=100,
-            ack_eliciting=True, in_flight=True,
+            packet_number=0,
+            sent_time=10.0,
+            sent_bytes=100,
+            ack_eliciting=True,
+            in_flight=True,
             frames=(SentHandshakeDoneFrame(),),
         )
     ]
@@ -358,8 +377,11 @@ def test_retransmit_lost_ack_not_retransmitted() -> None:
     conn = _make_server_conn()
     lost = [
         SentPacket(
-            packet_number=0, sent_time=10.0, sent_bytes=100,
-            ack_eliciting=False, in_flight=False,
+            packet_number=0,
+            sent_time=10.0,
+            sent_bytes=100,
+            ack_eliciting=False,
+            in_flight=False,
             frames=(SentAckFrame(),),
         )
     ]
@@ -373,8 +395,11 @@ def test_retransmit_lost_crypto_frame() -> None:
     conn = _make_server_conn()
     lost = [
         SentPacket(
-            packet_number=0, sent_time=10.0, sent_bytes=100,
-            ack_eliciting=True, in_flight=True,
+            packet_number=0,
+            sent_time=10.0,
+            sent_bytes=100,
+            ack_eliciting=True,
+            in_flight=True,
             frames=(SentCryptoFrame(offset=0, length=50),),
         )
     ]
@@ -419,6 +444,7 @@ def test_process_ack_triggers_loss_detection() -> None:
 
     # Simulate ACK for packet 4 only (gap >= 3 for packets 0,1)
     from zoomies.frames.ack import AckFrame
+
     ack = AckFrame(ranges=(range(4, 5),), delay=0)
     conn._now = 10.5  # advance time
     conn._process_ack(ack)
@@ -435,9 +461,7 @@ def test_idle_timeout_closes_connection() -> None:
     """Idle timeout closes the connection."""
     conn = _make_server_conn()
     conn._last_activity = 10.0
-    conn._config = QuicConfiguration(
-        certificate=CERT, private_key=KEY, idle_timeout=5.0
-    )
+    conn._config = QuicConfiguration(certificate=CERT, private_key=KEY, idle_timeout=5.0)
 
     events = conn.handle_timer(now=15.1)  # past idle timeout
     assert conn._state == ConnectionState.CLOSED
@@ -448,9 +472,7 @@ def test_pto_does_not_close_connection() -> None:
     """PTO fires a probe but does NOT close the connection."""
     conn = _make_server_conn()
     conn._last_activity = 10.0
-    conn._config = QuicConfiguration(
-        certificate=CERT, private_key=KEY, idle_timeout=60.0
-    )
+    conn._config = QuicConfiguration(certificate=CERT, private_key=KEY, idle_timeout=60.0)
 
     conn.send_stream_data(stream_id=0, data=b"hello", end_stream=False)
     conn.send_datagrams(now=10.0)
@@ -470,9 +492,7 @@ def test_get_timer_returns_pto_deadline() -> None:
     """get_timer returns PTO deadline when packets are in flight."""
     conn = _make_server_conn()
     conn._last_activity = 10.0
-    conn._config = QuicConfiguration(
-        certificate=CERT, private_key=KEY, idle_timeout=60.0
-    )
+    conn._config = QuicConfiguration(certificate=CERT, private_key=KEY, idle_timeout=60.0)
 
     conn.send_stream_data(stream_id=0, data=b"hello", end_stream=False)
     conn.send_datagrams(now=10.0)

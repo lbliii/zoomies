@@ -223,11 +223,17 @@ class CryptoPair:
         if self._recv._secret is None or self._send._secret is None:
             raise RuntimeError("Cannot update keys: 1-RTT keys not set up")
         new_recv_secret = hkdf_expand_label(
-            hashes.SHA256, self._recv._secret, b"quic ku", b"",
+            hashes.SHA256,
+            self._recv._secret,
+            b"quic ku",
+            b"",
             hashes.SHA256.digest_size,
         )
         new_send_secret = hkdf_expand_label(
-            hashes.SHA256, self._send._secret, b"quic ku", b"",
+            hashes.SHA256,
+            self._send._secret,
+            b"quic ku",
+            b"",
             hashes.SHA256.digest_size,
         )
         self._recv.setup(secret=new_recv_secret)

@@ -76,8 +76,12 @@ def test_cc_slow_start_growth() -> None:
     # Send and ACK one packet
     cc.on_packet_sent(1200)
     pkt = SentPacket(
-        packet_number=0, sent_time=1.0, sent_bytes=1200,
-        ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+        packet_number=0,
+        sent_time=1.0,
+        sent_bytes=1200,
+        ack_eliciting=True,
+        in_flight=True,
+        frames=(SentPingFrame(),),
     )
     cc.on_packets_acked([pkt])
     assert cc.congestion_window == INITIAL_WINDOW + 1200
@@ -90,8 +94,12 @@ def test_cc_congestion_avoidance_growth() -> None:
     # Trigger loss to set ssthresh
     cc.on_packet_sent(1200)
     lost_pkt = SentPacket(
-        packet_number=0, sent_time=1.0, sent_bytes=1200,
-        ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+        packet_number=0,
+        sent_time=1.0,
+        sent_bytes=1200,
+        ack_eliciting=True,
+        in_flight=True,
+        frames=(SentPingFrame(),),
     )
     cc.on_packets_lost([lost_pkt], now=2.0)
     # Now ssthresh = cwnd (after halving)
@@ -101,8 +109,12 @@ def test_cc_congestion_avoidance_growth() -> None:
     # Send and ACK a packet in congestion avoidance
     cc.on_packet_sent(1200)
     acked_pkt = SentPacket(
-        packet_number=1, sent_time=2.0, sent_bytes=1200,
-        ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+        packet_number=1,
+        sent_time=2.0,
+        sent_bytes=1200,
+        ack_eliciting=True,
+        in_flight=True,
+        frames=(SentPingFrame(),),
     )
     cc.on_packets_acked([acked_pkt])
     # Linear growth: cwnd += MSS * sent_bytes / cwnd
@@ -115,8 +127,12 @@ def test_cc_loss_halves_window() -> None:
     cc = CongestionController()
     cc.on_packet_sent(1200)
     lost_pkt = SentPacket(
-        packet_number=0, sent_time=1.0, sent_bytes=1200,
-        ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+        packet_number=0,
+        sent_time=1.0,
+        sent_bytes=1200,
+        ack_eliciting=True,
+        in_flight=True,
+        frames=(SentPingFrame(),),
     )
     cc.on_packets_lost([lost_pkt], now=2.0)
     assert cc.congestion_window == max(INITIAL_WINDOW // 2, MINIMUM_WINDOW)
@@ -129,8 +145,12 @@ def test_cc_minimum_window_floor() -> None:
     cc.congestion_window = MINIMUM_WINDOW
     cc.on_packet_sent(1200)
     lost_pkt = SentPacket(
-        packet_number=0, sent_time=1.0, sent_bytes=1200,
-        ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+        packet_number=0,
+        sent_time=1.0,
+        sent_bytes=1200,
+        ack_eliciting=True,
+        in_flight=True,
+        frames=(SentPingFrame(),),
     )
     cc.on_packets_lost([lost_pkt], now=2.0)
     assert cc.congestion_window == MINIMUM_WINDOW
@@ -141,12 +161,20 @@ def test_cc_no_double_reduction_same_recovery() -> None:
     cc = CongestionController()
     cc.on_packet_sent(2400)
     pkt0 = SentPacket(
-        packet_number=0, sent_time=1.0, sent_bytes=1200,
-        ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+        packet_number=0,
+        sent_time=1.0,
+        sent_bytes=1200,
+        ack_eliciting=True,
+        in_flight=True,
+        frames=(SentPingFrame(),),
     )
     pkt1 = SentPacket(
-        packet_number=1, sent_time=1.0, sent_bytes=1200,
-        ack_eliciting=True, in_flight=True, frames=(SentPingFrame(),),
+        packet_number=1,
+        sent_time=1.0,
+        sent_bytes=1200,
+        ack_eliciting=True,
+        in_flight=True,
+        frames=(SentPingFrame(),),
     )
     cc.on_packets_lost([pkt0], now=2.0)
     cwnd_after_first = cc.congestion_window
