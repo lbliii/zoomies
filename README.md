@@ -128,6 +128,7 @@ uv run python -m examples.sans_io_connection
 | `examples/qpack_roundtrip.py` | QPACK header encode/decode |
 | `examples/parse_initial_packet.py` | Parse QUIC Initial packet header |
 | `examples/sans_io_connection.py` | Sans-I/O `QuicConnection` demo (uses test fixtures) |
+| `examples/stream_echo.py` | Stream reassembly, RTT estimation, congestion control, loss detection, PTO timer loop |
 
 ---
 
