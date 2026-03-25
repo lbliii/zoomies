@@ -75,17 +75,19 @@ def test_connection_datagram_received() -> None:
     # HandshakeComplete only when full TLS handshake done (1-RTT ready)
 
 
-def test_connection_send_datagrams() -> None:
-    """send_datagrams returns queued datagrams after receiving Initial."""
+def test_connection_send_datagrams_no_response_on_decrypt_failure() -> None:
+    """send_datagrams returns [] when Initial packet fails decryption."""
+    from zoomies.events import DecryptionFailed
+
     config = QuicConfiguration(certificate=CERT, private_key=KEY)
     conn = QuicConnection(config)
-    pkt = _make_initial_packet()
-    conn.datagram_received(pkt, ("127.0.0.1", 443))
+    pkt = _make_initial_packet()  # unencrypted — will fail decrypt
+    events = conn.datagram_received(pkt, ("127.0.0.1", 443))
     datagrams = conn.send_datagrams()
-    assert len(datagrams) >= 1
-    assert len(datagrams[0]) > 18
-    # Second call returns empty (already sent)
-    assert conn.send_datagrams() == []
+    # No response queued on decrypt failure (no amplification)
+    assert datagrams == []
+    # DecryptionFailed event emitted for observability
+    assert any(isinstance(e, DecryptionFailed) for e in events)
 
 
 def test_connection_handshake_complete() -> None:

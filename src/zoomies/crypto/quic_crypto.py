@@ -47,9 +47,11 @@ class CryptoContext:
         self._hp: bytes | None = None
         self._aead: AESGCM | None = None
         self._hp_cipher: Cipher | None = None
+        self._secret: bytes | None = None
 
     def setup(self, *, secret: bytes, version: int = QUIC_VERSION_1) -> None:
         """Set up from secret."""
+        self._secret = secret
         key, iv, hp = derive_key_iv_hp(secret=secret, version=version)
         self._key = key
         self._iv = iv
@@ -120,6 +122,7 @@ class CryptoPair:
     def __init__(self) -> None:
         self._recv = CryptoContext()
         self._send = CryptoContext()
+        self._key_phase: int = 0
 
     def setup_initial(
         self,
@@ -205,6 +208,31 @@ class CryptoPair:
         )
         self._recv.setup(secret=recv_secret, version=version)
         self._send.setup(secret=send_secret, version=version)
+
+    @property
+    def key_phase(self) -> int:
+        """Current key phase bit (0 or 1)."""
+        return self._key_phase
+
+    def update_keys(self) -> None:
+        """Perform key update (RFC 9001 §6).
+
+        Derives new secrets using HKDF-Expand-Label with "quic ku" label,
+        then sets up new AEAD keys. Flips the key phase bit.
+        """
+        if self._recv._secret is None or self._send._secret is None:
+            raise RuntimeError("Cannot update keys: 1-RTT keys not set up")
+        new_recv_secret = hkdf_expand_label(
+            hashes.SHA256, self._recv._secret, b"quic ku", b"",
+            hashes.SHA256.digest_size,
+        )
+        new_send_secret = hkdf_expand_label(
+            hashes.SHA256, self._send._secret, b"quic ku", b"",
+            hashes.SHA256.digest_size,
+        )
+        self._recv.setup(secret=new_recv_secret)
+        self._send.setup(secret=new_send_secret)
+        self._key_phase ^= 1
 
     def encrypt_packet(
         self,

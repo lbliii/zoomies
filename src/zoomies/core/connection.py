@@ -15,21 +15,28 @@ from zoomies.events import (
     ConnectionIdIssued,
     ConnectionIdRetired,
     DatagramReceived,
+    DecryptionFailed,
     HandshakeComplete,
     QuicEvent,
+    StopSendingReceived,
     StreamDataReceived,
+    StreamReset,
 )
 from zoomies.frames.ack import AckFrame, RangeSet, pull_ack_frame, push_ack_frame
 from zoomies.frames.common import (
+    ConnectionCloseFrame,
     PingFrame,
     pull_padding_frame,
     pull_ping_frame,
+    push_connection_close,
     push_ping_frame,
 )
 from zoomies.frames.connection_id import pull_retire_connection_id, push_new_connection_id
 from zoomies.frames.crypto import CryptoFrame, pull_crypto_frame, push_crypto_frame
 from zoomies.frames.stream import (
     StreamFrame,
+    pull_reset_stream_frame,
+    pull_stop_sending_frame,
     pull_stream_frame,
     push_stream_frame,
 )
@@ -47,6 +54,18 @@ from zoomies.packet.header import (
     pull_quic_header,
 )
 from zoomies.primitives import StreamId
+from zoomies.recovery import (
+    CongestionController,
+    PacketSpace,
+    RttEstimator,
+    SentAckFrame,
+    SentCryptoFrame,
+    SentHandshakeDoneFrame,
+    SentNewConnectionIdFrame,
+    SentPingFrame,
+    SentStreamFrame,
+    detect_lost_packets,
+)
 
 INITIAL_HEADER_LEN = 18
 CRYPTO_FRAME_TYPE = 0x06
@@ -115,6 +134,24 @@ class QuicConnection:
         self._ack_needed_initial = False
         self._ack_needed_handshake = False
         self._ack_needed_application = False
+        # Timer tracking (sans-I/O: caller provides timestamps)
+        self._last_activity: float = 0.0
+        self._now: float = 0.0  # current timestamp for packet recording
+        # Recovery: sent packet tracking and RTT estimation (RFC 9002)
+        self._initial_space = PacketSpace()
+        self._handshake_space = PacketSpace()
+        self._application_space = PacketSpace()
+        self._rtt = RttEstimator()
+        self._cc = CongestionController()
+        self._pto_count = 0
+        # Anti-amplification (RFC 9000 §8): limit response before address validation
+        self._bytes_received = 0
+        self._bytes_sent = 0
+        self._address_validated = False
+        # Retransmission queues for lost frames
+        self._crypto_retransmit: list[tuple[int, bytes]] = []  # (offset, data)
+        self._handshake_done_pending = False
+        self._probe_needed = False
 
     @property
     def our_cid(self) -> bytes:
@@ -130,18 +167,27 @@ class QuicConnection:
         """Get or create a stream by ID."""
         sid = stream_id.value
         if sid not in self._streams:
-            self._streams[sid] = Stream(stream_id)
+            stream = Stream(stream_id)
+            if self._config.max_stream_data > 0:
+                stream.set_max_stream_data(self._config.max_stream_data)
+            self._streams[sid] = stream
         return self._streams[sid]
 
     def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool = False) -> None:
         """Queue stream data for sending (H3StreamSender protocol)."""
         self._stream_send_queue.append((stream_id, data, end_stream))
 
-    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> list[QuicEvent]:
+    def datagram_received(
+        self, data: bytes, addr: tuple[str, int], *, now: float = 0.0
+    ) -> list[QuicEvent]:
         """Process incoming datagram; returns events."""
         events: list[QuicEvent] = []
         events.append(DatagramReceived(data=data, addr=addr))
         self._peer_addr = addr
+        self._now = now
+        self._bytes_received += len(data)
+        if now > 0.0:
+            self._last_activity = now
 
         if len(data) < 7:
             return events
@@ -196,12 +242,11 @@ class QuicConnection:
             self._initial_ack_ranges.add(pn)
             self._ack_needed_initial = True
             self._state = ConnectionState.HANDSHAKE
-            self._queue_initial_response()
+            self._queue_initial_response(now=self._now)
             self._parse_payload_frames(plain_payload, events)
             self._feed_crypto_to_tls(events)
         except InvalidTag:
-            self._queue_initial_response()
-            self._state = ConnectionState.HANDSHAKE
+            events.append(DecryptionFailed(packet_type="initial"))
 
     def _handle_handshake(
         self, data: bytes, buf: Buffer, header: LongHeader, events: list[QuicEvent]
@@ -219,7 +264,7 @@ class QuicConnection:
             self._parse_payload_frames(plain_payload, events)
             self._feed_crypto_to_tls(events)
         except InvalidTag:
-            pass
+            events.append(DecryptionFailed(packet_type="handshake"))
 
     def _handle_short(
         self, data: bytes, buf: Buffer, header: ShortHeader, events: list[QuicEvent]
@@ -236,7 +281,7 @@ class QuicConnection:
             self._ack_needed_application = True
             self._parse_payload_frames(plain_payload, events)
         except InvalidTag:
-            pass
+            events.append(DecryptionFailed(packet_type="1rtt"))
 
     def _feed_crypto_to_tls(self, events: list[QuicEvent]) -> None:
         """Feed contiguous CRYPTO data to TLS, queue Handshake packets."""
@@ -269,6 +314,7 @@ class QuicConnection:
             self._one_rtt_crypto = CryptoPair()
             self._one_rtt_crypto.setup_1rtt(result.traffic_secret, is_client=False)
             self._state = ConnectionState.ONE_RTT
+            self._address_validated = True
             events.append(HandshakeComplete())
             self._queue_new_connection_id(events)
             self._queue_handshake_done()
@@ -289,7 +335,25 @@ class QuicConnection:
                     pull_ping_frame(buf)
                 elif first in (0x02, 0x03):
                     buf.pull_uint8()
-                    pull_ack_frame(buf)
+                    ack = pull_ack_frame(buf)
+                    self._process_ack(ack)
+                elif first == 0x04:
+                    frame = pull_reset_stream_frame(buf)
+                    events.append(
+                        StreamReset(
+                            stream_id=frame.stream_id.value,
+                            error_code=frame.error_code,
+                            final_size=frame.final_size,
+                        )
+                    )
+                elif first == 0x05:
+                    frame = pull_stop_sending_frame(buf)
+                    events.append(
+                        StopSendingReceived(
+                            stream_id=frame.stream_id.value,
+                            error_code=frame.error_code,
+                        )
+                    )
                 elif first == CRYPTO_FRAME_TYPE:
                     frame = pull_crypto_frame(buf)
                     bisect.insort(self._crypto_recv, (frame.offset, frame.data))
@@ -304,6 +368,11 @@ class QuicConnection:
                 elif (first & 0x08) == 0x08:
                     frame = pull_stream_frame(buf)
                     stream = self._get_or_create_stream(frame.stream_id)
+                    if not stream._recv.flow_control_ok(frame.offset, len(frame.data)):
+                        self._close_with_error(
+                            0x03, "Flow control limit exceeded", events
+                        )
+                        return
                     delivered = stream.add_receive_frame(frame)
                     if delivered or frame.fin:
                         events.append(
@@ -318,6 +387,72 @@ class QuicConnection:
                     break
             except ValueError:
                 break
+
+    def _process_ack(self, ack: AckFrame) -> None:
+        """Process received ACK frame — update RTT, detect loss, retransmit."""
+        ack_ranges = list(ack.ranges)
+        # Determine which space this ACK is for based on connection state
+        if self._state == ConnectionState.HANDSHAKE:
+            space = self._initial_space
+        elif self._state == ConnectionState.ONE_RTT:
+            space = self._application_space
+        else:
+            return
+
+        newly_acked = space.on_ack_received(ack_ranges)
+        if not newly_acked:
+            return
+
+        # Congestion control: process ACKed packets
+        self._cc.on_packets_acked(newly_acked)
+
+        # RTT sample from the largest newly-acked packet
+        largest = max(newly_acked, key=lambda p: p.packet_number)
+        if largest.sent_time > 0.0 and self._now > 0.0:
+            latest_rtt = self._now - largest.sent_time
+            if latest_rtt > 0.0:
+                # Convert ACK delay from microseconds to seconds
+                ack_delay = ack.delay / 1_000_000.0
+                self._rtt.update(
+                    latest_rtt=latest_rtt,
+                    ack_delay=ack_delay,
+                    handshake_confirmed=self._state == ConnectionState.ONE_RTT,
+                )
+                self._pto_count = 0
+
+        # Loss detection (RFC 9002 §6)
+        lost = detect_lost_packets(
+            space.sent_packets, space.largest_acked_packet, self._now, self._rtt
+        )
+        if lost:
+            self._cc.on_packets_lost(lost, self._now)
+            self._retransmit_lost(lost)
+
+    def _retransmit_lost(self, lost: list[object]) -> None:
+        """Re-queue retransmittable frames from lost packets."""
+        from zoomies.recovery.sent_packet import SentPacket as _SentPacket
+
+        for pkt in lost:
+            if not isinstance(pkt, _SentPacket):
+                continue
+            for frame in pkt.frames:
+                if isinstance(frame, SentCryptoFrame):
+                    self._crypto_retransmit.append(
+                        (frame.offset, b"")  # CRYPTO data tracked by TLS layer
+                    )
+                elif isinstance(frame, SentStreamFrame):
+                    # Retrieve original data from stream send buffer
+                    stream = self._get_or_create_stream(StreamId(frame.stream_id))
+                    data = stream._send.get_data(frame.offset, frame.length)
+                    if data:
+                        self._stream_send_queue.append(
+                            (frame.stream_id, data, frame.fin)
+                        )
+                elif isinstance(frame, SentHandshakeDoneFrame):
+                    self._handshake_done_pending = True
+                # SentAckFrame: NOT retransmitted (RFC 9002)
+                # SentPingFrame: NOT retransmitted
+                # SentNewConnectionIdFrame: NOT retransmitted (idempotent)
 
     def _queue_new_connection_id(self, events: list[QuicEvent]) -> None:
         """Queue 1-RTT packet with NEW_CONNECTION_ID for connection migration."""
@@ -343,6 +478,14 @@ class QuicConnection:
         plain_header = header_buf.data
         encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
         self._send_queue.append(encrypted)
+        self._application_space.on_packet_sent(
+            packet_number=pn,
+            sent_time=self._now,
+            sent_bytes=len(encrypted),
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentNewConnectionIdFrame(sequence=sequence),),
+        )
         self._one_rtt_pn += 1
 
     def _queue_handshake_done(self) -> None:
@@ -358,13 +501,22 @@ class QuicConnection:
         plain_header = header_buf.data
         encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
         self._send_queue.append(encrypted)
+        self._application_space.on_packet_sent(
+            packet_number=pn,
+            sent_time=self._now,
+            sent_bytes=len(encrypted),
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentHandshakeDoneFrame(),),
+        )
         self._one_rtt_pn += 1
 
-    def _queue_initial_response(self) -> None:
+    def _queue_initial_response(self, now: float = 0.0) -> None:
         """Queue server Initial packet."""
         if not self._initial_crypto or not self._our_cid or not self._peer_cid:
             return
         payload_buf = Buffer()
+        frames: list[SentAckFrame | SentPingFrame] = []
         # Include ACK if we have received Initial packets
         if len(self._initial_ack_ranges) > 0:
             ack = AckFrame(ranges=tuple(self._initial_ack_ranges._ranges), delay=0)
@@ -373,7 +525,9 @@ class QuicConnection:
             payload_buf.push_bytes(buf_type.data)
             push_ack_frame(payload_buf, ack)
             self._ack_needed_initial = False
+            frames.append(SentAckFrame())
         push_ping_frame(payload_buf, PingFrame())
+        frames.append(SentPingFrame())
         plain_payload = payload_buf.data
         pn = self._initial_pn
         header_buf = Buffer()
@@ -388,6 +542,14 @@ class QuicConnection:
         plain_header = header_buf.data
         encrypted = self._initial_crypto.encrypt_packet(plain_header, plain_payload, pn)
         self._send_queue.append(encrypted)
+        self._initial_space.on_packet_sent(
+            packet_number=pn,
+            sent_time=now,
+            sent_bytes=len(encrypted),
+            ack_eliciting=True,
+            in_flight=True,
+            frames=tuple(frames),
+        )
         self._initial_pn += 1
 
     def _queue_handshake_response(self, tls_data: bytes) -> None:
@@ -416,11 +578,21 @@ class QuicConnection:
             plain_header = header_buf.data
             encrypted = self._handshake_crypto.encrypt_packet(plain_header, plain_payload, pn)
             self._send_queue.append(encrypted)
+            self._handshake_space.on_packet_sent(
+                packet_number=pn,
+                sent_time=self._now,
+                sent_bytes=len(encrypted),
+                ack_eliciting=True,
+                in_flight=True,
+                frames=(SentCryptoFrame(offset=offset, length=len(chunk)),),
+            )
             self._handshake_pn += 1
             offset += len(chunk)
 
-    def _build_ack_packet(self, ack_ranges: RangeSet, crypto: CryptoPair, pn: int) -> bytes:
-        """Build a 1-RTT packet containing an ACK frame."""
+    def _build_ack_packet(
+        self, ack_ranges: RangeSet, crypto: CryptoPair, pn: int, space: PacketSpace
+    ) -> bytes:
+        """Build a packet containing an ACK frame."""
         payload_buf = Buffer()
         ack = AckFrame(ranges=tuple(ack_ranges._ranges), delay=0)
         buf_type = Buffer()
@@ -431,10 +603,22 @@ class QuicConnection:
         header_buf = Buffer()
         push_short_header(header_buf, self._peer_cid, pn)
         plain_header = header_buf.data
-        return crypto.encrypt_packet(plain_header, plain_payload, pn)
+        encrypted = crypto.encrypt_packet(plain_header, plain_payload, pn)
+        # ACK-only packets are NOT ack-eliciting and NOT in-flight (RFC 9002)
+        space.on_packet_sent(
+            packet_number=pn,
+            sent_time=self._now,
+            sent_bytes=len(encrypted),
+            ack_eliciting=False,
+            in_flight=False,
+            frames=(SentAckFrame(),),
+        )
+        return encrypted
 
-    def send_datagrams(self) -> list[bytes]:
+    def send_datagrams(self, *, now: float = 0.0) -> list[bytes]:
         """Return queued datagrams to send."""
+        if now > 0.0:
+            self._now = now
         out, self._send_queue = self._send_queue, []
 
         # Generate pending ACKs
@@ -444,7 +628,10 @@ class QuicConnection:
             and len(self._handshake_ack_ranges) > 0
         ):
             ack_packet = self._build_ack_packet(
-                self._handshake_ack_ranges, self._handshake_crypto, self._handshake_pn
+                self._handshake_ack_ranges,
+                self._handshake_crypto,
+                self._handshake_pn,
+                self._handshake_space,
             )
             out.append(ack_packet)
             self._handshake_pn += 1
@@ -456,14 +643,59 @@ class QuicConnection:
             and len(self._application_ack_ranges) > 0
         ):
             ack_packet = self._build_ack_packet(
-                self._application_ack_ranges, self._one_rtt_crypto, self._one_rtt_pn
+                self._application_ack_ranges,
+                self._one_rtt_crypto,
+                self._one_rtt_pn,
+                self._application_space,
             )
             out.append(ack_packet)
             self._one_rtt_pn += 1
             self._ack_needed_application = False
 
+        # Re-queue HANDSHAKE_DONE if lost and needs retransmission
+        if (
+            self._handshake_done_pending
+            and self._state == ConnectionState.ONE_RTT
+            and self._one_rtt_crypto
+            and self._peer_cid
+        ):
+            self._handshake_done_pending = False
+            self._queue_handshake_done()
+            # The queued packet was added to _send_queue, grab it
+            out.extend(self._send_queue)
+            self._send_queue = []
+
+        # PTO probe: send PING to elicit ACK
+        if (
+            self._probe_needed
+            and self._state == ConnectionState.ONE_RTT
+            and self._one_rtt_crypto
+            and self._peer_cid
+        ):
+            self._probe_needed = False
+            payload_buf = Buffer()
+            push_ping_frame(payload_buf, PingFrame())
+            out.append(
+                self._encrypt_short_packet(payload_buf.data, (SentPingFrame(),))
+            )
+
         if self._state == ConnectionState.ONE_RTT and self._stream_send_queue:
             out.extend(self._flush_stream_send_queue())
+
+        # Anti-amplification (RFC 9000 §8): limit bytes sent before address validation
+        if not self._address_validated:
+            amplification_limit = 3 * self._bytes_received
+            filtered: list[bytes] = []
+            for dgram in out:
+                if self._bytes_sent + len(dgram) <= amplification_limit:
+                    self._bytes_sent += len(dgram)
+                    filtered.append(dgram)
+                else:
+                    break
+            out = filtered
+        else:
+            for dgram in out:
+                self._bytes_sent += len(dgram)
 
         return out
 
@@ -474,11 +706,20 @@ class QuicConnection:
         packets: list[bytes] = []
         # Coalesce multiple small STREAM frames into single packets
         payload_buf = Buffer()
+        current_frames: list[SentStreamFrame] = []
         max_payload = MTU - 30 - AEAD_TAG_SIZE  # header + PN + AEAD overhead
+        deferred: list[tuple[int, bytes, bool]] = []
 
         for stream_id, data, end_stream in self._stream_send_queue:
+            # Congestion window gate: check if we can send more
+            if not self._cc.can_send(MTU):
+                deferred.append((stream_id, data, end_stream))
+                continue
             stream = self._get_or_create_stream(StreamId(stream_id))
             offset = stream._send.sent_end
+
+            # Buffer data for potential retransmission
+            stream._send.write(data)
 
             frame_buf = Buffer()
             push_stream_frame(
@@ -493,28 +734,178 @@ class QuicConnection:
             frame_bytes = frame_buf.data
             stream._send.advance(len(data), fin=end_stream)
 
+            sent_frame = SentStreamFrame(
+                stream_id=stream_id, offset=offset, length=len(data), fin=end_stream
+            )
+
             # If this frame doesn't fit in current packet, flush current
             if len(payload_buf.data) > 0 and len(payload_buf.data) + len(frame_bytes) > max_payload:
-                packets.append(self._encrypt_short_packet(payload_buf.data))
+                packets.append(
+                    self._encrypt_short_packet(payload_buf.data, tuple(current_frames))
+                )
                 payload_buf = Buffer()
+                current_frames = []
 
             payload_buf.push_bytes(frame_bytes)
+            current_frames.append(sent_frame)
 
         # Flush remaining
         if len(payload_buf.data) > 0:
-            packets.append(self._encrypt_short_packet(payload_buf.data))
+            packets.append(
+                self._encrypt_short_packet(payload_buf.data, tuple(current_frames))
+            )
 
-        self._stream_send_queue.clear()
+        self._stream_send_queue = deferred
         return packets
 
-    def _encrypt_short_packet(self, plain_payload: bytes) -> bytes:
+    def _optimal_pn_length(self) -> int:
+        """Compute optimal packet number encoding length (RFC 9000 17.1).
+
+        Uses the distance from the largest acknowledged PN to encode
+        the minimum number of bytes needed.
+        """
+        largest_acked = self._application_space.largest_acked_packet
+        if largest_acked is None:
+            return 4  # no ACK yet, use full 4 bytes
+        pn = self._one_rtt_pn
+        distance = pn - largest_acked
+        if distance < 0x80:
+            return 1
+        if distance < 0x8000:
+            return 2
+        return 4
+
+    def _encrypt_short_packet(
+        self,
+        plain_payload: bytes,
+        frames: tuple[
+            SentStreamFrame
+            | SentHandshakeDoneFrame
+            | SentNewConnectionIdFrame
+            | SentPingFrame,
+            ...,
+        ] = (),
+    ) -> bytes:
         """Encrypt a short header packet with the given payload."""
         if not self._one_rtt_crypto:
             raise RuntimeError("1-RTT crypto not initialized")
         pn = self._one_rtt_pn
+        pn_len = self._optimal_pn_length()
         header_buf = Buffer()
-        push_short_header(header_buf, self._peer_cid, pn)
+        push_short_header(header_buf, self._peer_cid, pn, pn_len=pn_len)
         plain_header = header_buf.data
         encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
+        ack_eliciting = any(not isinstance(f, SentAckFrame) for f in frames) if frames else True
+        in_flight = ack_eliciting  # ACK-only packets are not in-flight
+        self._application_space.on_packet_sent(
+            packet_number=pn,
+            sent_time=self._now,
+            sent_bytes=len(encrypted),
+            ack_eliciting=ack_eliciting,
+            in_flight=in_flight,
+            frames=frames,
+        )
+        if in_flight:
+            self._cc.on_packet_sent(len(encrypted))
         self._one_rtt_pn += 1
         return encrypted
+
+    # --- Public lifecycle methods ---
+
+    def close(self, error_code: int = 0, reason: str = "") -> None:
+        """Initiate graceful connection close. Queues CONNECTION_CLOSE frame."""
+        if self._state == ConnectionState.CLOSED:
+            return
+        reason_bytes = reason.encode("utf-8") if reason else b""
+        frame = ConnectionCloseFrame(
+            error_code=error_code, reason_phrase=reason_bytes
+        )
+        payload_buf = Buffer()
+        push_connection_close(payload_buf, frame)
+        plain_payload = payload_buf.data
+
+        if self._one_rtt_crypto and self._peer_cid:
+            self._send_queue.append(self._encrypt_short_packet(plain_payload))
+        elif self._handshake_crypto and self._our_cid and self._peer_cid:
+            pn = self._handshake_pn
+            pn_bytes = pn.to_bytes(PN_SIZE, "big")
+            plain = pn_bytes + plain_payload
+            ciphertext_len = len(plain) + AEAD_TAG_SIZE
+            header_buf = Buffer()
+            push_handshake_packet_header(
+                header_buf,
+                destination_cid=self._peer_cid,
+                source_cid=self._our_cid,
+                payload_length=ciphertext_len,
+            )
+            plain_header = header_buf.data
+            encrypted = self._handshake_crypto.encrypt_packet(
+                plain_header, plain_payload, pn
+            )
+            self._send_queue.append(encrypted)
+            self._handshake_pn += 1
+
+        self._state = ConnectionState.CLOSED
+
+    def get_timer(self) -> float | None:
+        """Return absolute time of next timer deadline, or None if no timer pending.
+
+        Sans-I/O: the caller uses this to schedule when to call handle_timer().
+        Returns the earliest of: idle timeout, PTO deadline.
+        """
+        if self._state == ConnectionState.CLOSED:
+            return None
+        deadlines: list[float] = []
+        # Idle timeout
+        if self._last_activity > 0.0 and self._config.idle_timeout > 0:
+            deadlines.append(self._last_activity + self._config.idle_timeout)
+        # PTO: if there are ack-eliciting packets in flight
+        for space in (self._initial_space, self._handshake_space, self._application_space):
+            if space.has_ack_eliciting_in_flight:
+                # Find most recent sent time among in-flight packets
+                latest_sent = max(
+                    p.sent_time for p in space.sent_packets.values() if p.ack_eliciting
+                )
+                pto = self._rtt.pto_duration() * (2**self._pto_count)
+                deadlines.append(latest_sent + pto)
+        return min(deadlines) if deadlines else None
+
+    def handle_timer(self, now: float) -> list[QuicEvent]:
+        """Handle timer expiry. Called by the caller when get_timer() deadline passes.
+
+        Sans-I/O: the library never sleeps. The caller provides the current time.
+        """
+        events: list[QuicEvent] = []
+        if self._state == ConnectionState.CLOSED:
+            return events
+        self._now = now
+
+        # Check idle timeout first
+        if self._last_activity > 0.0 and self._config.idle_timeout > 0:
+            idle_deadline = self._last_activity + self._config.idle_timeout
+            if now >= idle_deadline:
+                self._close_with_error(0, "idle timeout", events)
+                return events
+
+        # PTO expiry — send a probe (PING) and increment backoff
+        for space in (self._initial_space, self._handshake_space, self._application_space):
+            if space.has_ack_eliciting_in_flight:
+                latest_sent = max(
+                    p.sent_time for p in space.sent_packets.values() if p.ack_eliciting
+                )
+                pto = self._rtt.pto_duration() * (2**self._pto_count)
+                if now >= latest_sent + pto:
+                    self._pto_count += 1
+                    self._probe_needed = True
+                    break
+
+        return events
+
+    def _close_with_error(
+        self, error_code: int, reason: str, events: list[QuicEvent]
+    ) -> None:
+        """Close connection with error, queue CONNECTION_CLOSE, emit event."""
+        if self._state == ConnectionState.CLOSED:
+            return
+        self.close(error_code=error_code, reason=reason)
+        events.append(ConnectionClosed(error_code=error_code, reason=reason))

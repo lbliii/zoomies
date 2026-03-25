@@ -53,6 +53,30 @@ class ConnectionIdRetired:
 
 
 @dataclass(frozen=True, slots=True)
+class DecryptionFailed:
+    """Packet decryption failed (InvalidTag). Informational — no state change."""
+
+    packet_type: str
+
+
+@dataclass(frozen=True, slots=True)
+class StreamReset:
+    """Peer reset a stream (RESET_STREAM frame)."""
+
+    stream_id: int
+    error_code: int
+    final_size: int
+
+
+@dataclass(frozen=True, slots=True)
+class StopSendingReceived:
+    """Peer requested we stop sending on a stream (STOP_SENDING frame)."""
+
+    stream_id: int
+    error_code: int
+
+
+@dataclass(frozen=True, slots=True)
 class H3HeadersReceived:
     """HTTP/3 headers received (e.g. request or response)."""
 
@@ -79,6 +103,9 @@ QuicEvent = (
     | HandshakeComplete
     | ConnectionIdIssued
     | ConnectionIdRetired
+    | DecryptionFailed
+    | StreamReset
+    | StopSendingReceived
 )
 
 # Union type for HTTP/3 events
