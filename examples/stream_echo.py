@@ -35,8 +35,8 @@ def demo_stream_reassembly() -> None:
 
     # Simulate out-of-order arrival (later chunk arrives first)
     chunks = [
-        (8, b" works!", True),   # arrives first (offset 8, with FIN)
-        (0, b"Recovery", False), # arrives second (offset 0, fills the gap)
+        (8, b" works!", True),  # arrives first (offset 8, with FIN)
+        (0, b"Recovery", False),  # arrives second (offset 0, fills the gap)
     ]
 
     for offset, data, fin in chunks:
@@ -46,8 +46,7 @@ def demo_stream_reassembly() -> None:
             print(f"  Frame(offset={offset}, {len(data)}B, fin={fin}) -> delivered: {delivered!r}")
         else:
             print(
-                f"  Frame(offset={offset}, {len(data)}B, fin={fin})"
-                " -> buffered (waiting for gap)"
+                f"  Frame(offset={offset}, {len(data)}B, fin={fin}) -> buffered (waiting for gap)"
             )
 
     print(f"\n  Complete: {stream.receive_complete}")
