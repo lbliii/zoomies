@@ -1,4 +1,4 @@
-# ⚡ Zoomies
+# ⟢⟣ Zoomies
 
 [![PyPI version](https://img.shields.io/pypi/v/zoomies.svg)](https://pypi.org/project/zoomies/)
 [![Build Status](https://github.com/lbliii/zoomies/actions/workflows/tests.yml/badge.svg)](https://github.com/lbliii/zoomies/actions/workflows/tests.yml)
@@ -212,7 +212,7 @@ Zoomies is developed as part of the b-stack but is standalone. No imports from B
 | **)彡** | [Kida](https://github.com/lbliii/kida) | Template engine | [Docs](https://lbliii.github.io/kida/) |
 | **ฅᨐฅ** | [Patitas](https://github.com/lbliii/patitas) | Markdown parser | [Docs](https://lbliii.github.io/patitas/) |
 | **⌾⌾⌾** | [Rosettes](https://github.com/lbliii/rosettes) | Syntax highlighter | [Docs](https://lbliii.github.io/rosettes/) |
-| **⚡** | **Zoomies** | QUIC/HTTP/3 ← You are here | — |
+| **⟢⟣** | **Zoomies** | QUIC/HTTP/3 ← You are here | — |
 
 Python-native. Free-threading ready. No npm required.
 

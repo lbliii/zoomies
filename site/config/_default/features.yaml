@@ -1,0 +1,13 @@
+features:
+  rss: true
+  sitemap: true
+  search: true
+  json: true
+  llm_txt: true
+
+social_cards:
+  enabled: false
+  template: "default"
+  background_color: "#1a1a2e"
+  text_color: "#f8fafc"
+  accent_color: "#7c3aed"

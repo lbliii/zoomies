@@ -4,7 +4,7 @@
 site:
   title: "Zoomies"
   # baseurl set in environments/production.yaml for GitHub Pages
-  logo_text: "⚡"
+  logo_text: "⟢⟣"
   description: "Free-threading-native QUIC and HTTP/3 for Python 3.14t — sans-I/O, typed"
   language: "en"
 
