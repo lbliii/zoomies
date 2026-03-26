@@ -28,14 +28,15 @@ for dg in conn.send_datagrams():
 
 ## What is Zoomies?
 
-Zoomies is a sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114). Native to the b-stack (Pounce, Chirp), it has no b-stack dependencies and works anywhere — pure Python, cryptography only, free-threaded Python 3.14t. Alpha: full TLS 1.3 handshake, Handshake + 1-RTT packets.
+Zoomies is a sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114). Native to the b-stack (Pounce, Chirp), it has no b-stack dependencies and works anywhere — pure Python, cryptography only, free-threaded Python 3.14t. Alpha: full TLS 1.3 handshake, 1-RTT packets, loss recovery (RFC 9002), and congestion control.
 
 **What's good about it:**
 
 - **Sans-I/O** — Protocol layer consumes bytes, produces bytes. No socket access. Caller owns I/O.
 - **Types as contracts** — Frozen dataclasses for events, Protocols for handlers.
 - **Free-threading native** — No C extensions with limited API. Uses cryptography (3.14t-compatible).
-- **Composition** — Packet → Crypto → Stream → Connection → HTTP/3. Each layer testable in isolation.
+- **Composition** — Packet → Crypto → Stream → Connection → Recovery → HTTP/3. Each layer testable in isolation.
+- **Loss recovery** — RFC 9002 loss detection, RTT estimation, NewReno congestion control. Built into the connection layer.
 
 ---
 
@@ -48,6 +49,7 @@ Zoomies is a sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114)
 | `H3Connection` | HTTP/3 connection state machine (QPACK, streams) |
 | `encode_headers` / `decode_headers` | QPACK header compression |
 | `pull_quic_header()` | Parse QUIC packet headers (Initial, Handshake, etc.) |
+| `zoomies.recovery` | Loss detection, RTT estimation, congestion control (RFC 9002) |
 
 ---
 
@@ -126,6 +128,7 @@ uv run python -m examples.sans_io_connection
 | `examples/qpack_roundtrip.py` | QPACK header encode/decode |
 | `examples/parse_initial_packet.py` | Parse QUIC Initial packet header |
 | `examples/sans_io_connection.py` | Sans-I/O `QuicConnection` demo (uses test fixtures) |
+| `examples/stream_echo.py` | Stream reassembly, RTT estimation, congestion control, loss detection, PTO timer loop |
 
 ---
 
@@ -136,9 +139,9 @@ uv run python -m examples.sans_io_connection
 
 ```python
 from zoomies.events import (
-    DatagramReceived,
     HandshakeComplete,
     StreamDataReceived,
+    StreamReset,
     ConnectionClosed,
 )
 
@@ -146,7 +149,9 @@ for event in conn.datagram_received(datagram, addr):
     match event:
         case HandshakeComplete():
             ...
-        case StreamDataReceived(stream_id=id, data=data):
+        case StreamDataReceived(stream_id=sid, data=data):
+            ...
+        case StreamReset(stream_id=sid, error_code=code):
             ...
         case ConnectionClosed():
             ...
