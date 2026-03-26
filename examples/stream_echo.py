@@ -18,7 +18,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from zoomies.core.stream import Stream
 from zoomies.frames.stream import StreamFrame
 from zoomies.primitives import StreamId
-from zoomies.recovery import CongestionController, PacketSpace, RttEstimator, SentPacket, SentStreamFrame
+from zoomies.recovery import (
+    CongestionController,
+    PacketSpace,
+    RttEstimator,
+    SentPacket,
+    SentStreamFrame,
+)
 
 
 def demo_stream_reassembly() -> None:
@@ -39,7 +45,10 @@ def demo_stream_reassembly() -> None:
         if delivered:
             print(f"  Frame(offset={offset}, {len(data)}B, fin={fin}) -> delivered: {delivered!r}")
         else:
-            print(f"  Frame(offset={offset}, {len(data)}B, fin={fin}) -> buffered (waiting for gap)")
+            print(
+                f"  Frame(offset={offset}, {len(data)}B, fin={fin})"
+                " -> buffered (waiting for gap)"
+            )
 
     print(f"\n  Complete: {stream.receive_complete}")
     print(f"  Bytes delivered: {stream.bytes_delivered}")
@@ -123,8 +132,10 @@ def demo_loss_detection() -> None:
 
     # ACK packets 0, 1, 3, 4 (packet 2 missing -> lost)
     # on_ack_received takes range objects: [start, stop)
-    acked = space.on_ack_received([range(0, 2), range(3, 5)])
-    print(f"  ACKed: {[p.packet_number for p in acked]}, remaining: {sorted(space.sent_packets.keys())}")
+    acked = space.on_ack_received([range(2), range(3, 5)])
+    pns = [p.packet_number for p in acked]
+    remaining = sorted(space.sent_packets.keys())
+    print(f"  ACKed: {pns}, remaining: {remaining}")
 
     # Detect losses (packet 2 has gap of 2 from largest_acked=4)
     # RFC 9002 §6.1: packet-number threshold = 3, so gap of 2 isn't enough.
@@ -191,7 +202,7 @@ def demo_timer_loop() -> None:
     conn._last_activity = now
 
     print("  Simulating no ACKs (PTO retransmission):\n")
-    for tick in range(8):
+    for _tick in range(8):
         now += 0.25  # advance 250ms per tick
         timer = conn.get_timer()
         if timer is not None and now >= timer:
