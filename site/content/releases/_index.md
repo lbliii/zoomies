@@ -10,6 +10,15 @@ keywords: [releases, changelog, versions, updates]
 category: changelog
 cascade:
   type: changelog
+icon: tag
 ---
 
+# Releases
+
 Release notes for Zoomies. Each release includes highlights, new features, bug fixes, and breaking changes.
+
+:::{child-cards}
+:columns: 1
+:include: all
+:fields: title, description
+:::

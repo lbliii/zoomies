@@ -10,3 +10,8 @@ site:
 
 # Template Engine
 template_engine: kida
+
+link_previews:
+  enabled: true
+  allowed_hosts:
+    - lbliii.github.io
