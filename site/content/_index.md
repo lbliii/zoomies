@@ -9,74 +9,35 @@ lang: en
 keywords: [zoomies, quic, http3, python, free-threading, nogil, sans-io]
 category: home
 
+cascade:
+  author: lbliii
+
 blob_background: true
 
 cta_buttons:
-  - text: Releases
-    url: /releases/
+  - text: Get Started
+    url: /docs/get-started/
     style: primary
-  - text: GitHub
-    url: https://github.com/lbliii/zoomies
+  - text: Docs
+    url: /docs/
     style: secondary
 
 show_recent_posts: false
 ---
 
-## QUIC & HTTP/3, Sans-I/O
+## The b-stack Ecosystem
 
-**Free-threading native. Typed. Pure Python.**
+A structured reactive stack — every layer written in pure Python for 3.14t free-threading.
 
-Zoomies is a sans-I/O protocol library for QUIC (RFC 9000) and HTTP/3 (RFC 9114). Native to the b-stack, it has no b-stack dependencies and works anywhere — pure Python, cryptography only, free-threaded Python 3.14t. Full TLS 1.3 handshake, loss recovery (RFC 9002), and congestion control.
+| | | | |
+|--:|---|---|---|
+| **ᓚᘏᗢ** | [Bengal](https://github.com/lbliii/bengal) | Static site generator | [Docs](https://lbliii.github.io/bengal/) |
+| **∿∿** | [Purr](https://github.com/lbliii/purr) | Content runtime | — |
+| **⌁⌁** | [Chirp](https://github.com/lbliii/chirp) | Web framework | [Docs](https://lbliii.github.io/chirp/) |
+| **=^..^=** | [Pounce](https://github.com/lbliii/pounce) | ASGI server | [Docs](https://lbliii.github.io/pounce/) |
+| **)彡** | [Kida](https://github.com/lbliii/kida) | Template engine | [Docs](https://lbliii.github.io/kida/) |
+| **ฅᨐฅ** | [Patitas](https://github.com/lbliii/patitas) | Markdown parser | [Docs](https://lbliii.github.io/patitas/) |
+| **⌾⌾⌾** | [Rosettes](https://github.com/lbliii/rosettes) | Syntax highlighter | [Docs](https://lbliii.github.io/rosettes/) |
+| **⟢⟣** | [Zoomies](https://github.com/lbliii/zoomies) | QUIC & HTTP/3 ← You are here | [Docs](https://lbliii.github.io/zoomies/) |
 
-```python
-from zoomies.core import QuicConnection, QuicConfiguration
-from zoomies.events import HandshakeComplete
-
-config = QuicConfiguration(certificate=cert, private_key=key)
-conn = QuicConnection(config)
-
-events = conn.datagram_received(datagram, addr)
-for event in events:
-    if isinstance(event, HandshakeComplete):
-        ...
-```
-
----
-
-## What's good about it
-
-:::{cards}
-:columns: 2
-:gap: medium
-
-:::{card} Sans-I/O
-:icon: cpu
-Protocol layer consumes bytes, produces bytes. No socket access. Caller owns I/O.
-:::{/card}
-
-:::{card} Types as Contracts
-:icon: check-circle
-Frozen dataclasses for events, Protocols for handlers. Full IDE support.
-:::{/card}
-
-:::{card} Free-Threading Native
-:icon: zap
-No C extensions with limited API. Uses cryptography (3.14t-compatible).
-:::{/card}
-
-:::{card} Composition
-:icon: package
-Packet → Crypto → Stream → Connection → HTTP/3. Each layer testable in isolation.
-:::{/card}
-
-:::{/cards}
-
----
-
-## Installation
-
-```bash
-pip install zoomies
-```
-
-Requires Python 3.14+.
+Python-native. Free-threading ready. No npm required.

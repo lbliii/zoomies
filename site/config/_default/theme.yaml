@@ -4,8 +4,8 @@
 theme:
   name: "default"
 
-  default_appearance: "light"
-  default_palette: "brown-bengal"
+  default_appearance: "dark"
+  default_palette: "snow-lynx"
 
   syntax_highlighting:
     theme: "auto"
@@ -26,7 +26,13 @@ theme:
     - search.suggest
     - search.highlight
 
+    - footer.social
+
     - accessibility.skip_link
 
   max_tags_display: 10
   popular_tags_count: 20
+
+header:
+  nav_position: center
+  sticky: true
