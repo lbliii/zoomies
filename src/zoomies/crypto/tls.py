@@ -5,6 +5,7 @@ Supports X25519 key exchange and ECDSA P-256 certificate auth.
 """
 
 import os
+import secrets
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -349,6 +350,8 @@ class QuicTlsContext:
         h = hmac.HMAC(fin_key, hashes.SHA256())
         h.update(self._handshake_hash.copy().finalize())
         expected = h.finalize()
-        if client_verify != expected:
+        if len(client_verify) != len(expected):
+            raise ValueError("Finished verify failed")
+        if not secrets.compare_digest(client_verify, expected):
             raise ValueError("Finished verify failed")
         self._handshake_hash.update(msg)

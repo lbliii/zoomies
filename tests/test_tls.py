@@ -4,6 +4,7 @@ import pytest
 
 from tests.utils import load
 from zoomies.crypto.tls import (
+    HANDSHAKE_FINISHED,
     QuicTlsContext,
     TlsHandshakeResult,
     TlsHandshakeState,
@@ -114,14 +115,13 @@ def test_parse_client_hello_truncated_extensions() -> None:
         _parse_client_hello(data)
 
 
-def test_tls_client_hello_produces_server_hello() -> None:
-    """QuicTlsContext.receive with valid ClientHello returns ServerHello in data_to_send."""
+def _minimal_client_hello_x25519() -> bytes:
+    """Build minimal valid ClientHello with X25519 key share."""
     from cryptography.hazmat.primitives.asymmetric import x25519
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
 
     from zoomies.encoding import Buffer
 
-    # Build minimal valid ClientHello with X25519 key share
     priv = x25519.X25519PrivateKey.generate()
     pub_bytes = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
     inner = Buffer()
@@ -142,10 +142,34 @@ def test_tls_client_hello_produces_server_hello() -> None:
     ext_buf.push_uint16(len(key_share_payload.data))
     ext_buf.push_bytes(key_share_payload.data)
     _push_block(inner, 2, ext_buf.data)
-    msg = bytes([0x01]) + len(inner.data).to_bytes(3, "big") + inner.data
+    return bytes([0x01]) + len(inner.data).to_bytes(3, "big") + inner.data
 
+
+def test_tls_client_hello_produces_server_hello() -> None:
+    """QuicTlsContext.receive with valid ClientHello returns ServerHello in data_to_send."""
+    msg = _minimal_client_hello_x25519()
     ctx = QuicTlsContext(certificate=CERT, private_key=KEY)
     result = ctx.receive(msg)
     assert result.state == TlsHandshakeState.CLIENT_HELLO_RECEIVED
     assert len(result.data_to_send) > 0
     assert result.data_to_send[:1] == bytes([0x02])  # ServerHello
+
+
+def test_tls_finished_rejects_wrong_mac() -> None:
+    """Invalid Finished verify_data raises ValueError (constant-time compare)."""
+    ctx = QuicTlsContext(certificate=CERT, private_key=KEY)
+    ctx.receive(_minimal_client_hello_x25519())
+    wrong_body = b"\x00" * 32
+    finished_msg = bytes([HANDSHAKE_FINISHED]) + len(wrong_body).to_bytes(3, "big") + wrong_body
+    with pytest.raises(ValueError, match="Finished verify failed"):
+        ctx.receive(finished_msg)
+
+
+def test_tls_finished_rejects_wrong_length() -> None:
+    """Finished verify_data with wrong length raises ValueError."""
+    ctx = QuicTlsContext(certificate=CERT, private_key=KEY)
+    ctx.receive(_minimal_client_hello_x25519())
+    short_body = b"\x00" * 16
+    finished_msg = bytes([HANDSHAKE_FINISHED]) + len(short_body).to_bytes(3, "big") + short_body
+    with pytest.raises(ValueError, match="Finished verify failed"):
+        ctx.receive(finished_msg)
