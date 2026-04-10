@@ -111,12 +111,26 @@ for dg in conn.send_datagrams():
     sock.sendto(dg, addr)
 ```
 
+### Sans-I/O connection (client)
+
+```python
+from zoomies.core import QuicConnection, QuicConfiguration
+
+config = QuicConfiguration(is_client=True, verify_mode=False)
+conn = QuicConnection(config)
+conn.connect()
+
+for dg in conn.send_datagrams():
+    sock.sendto(dg, server_addr)
+```
+
 **Run the examples** (from repo root):
 
 ```bash
 uv run python -m examples.qpack_roundtrip
 uv run python -m examples.parse_initial_packet
 uv run python -m examples.sans_io_connection
+uv run python -m examples.client_server
 ```
 
 ---
@@ -129,6 +143,7 @@ uv run python -m examples.sans_io_connection
 | `examples/parse_initial_packet.py` | Parse QUIC Initial packet header |
 | `examples/sans_io_connection.py` | Sans-I/O `QuicConnection` demo (uses test fixtures) |
 | `examples/stream_echo.py` | Stream reassembly, RTT estimation, congestion control, loss detection, PTO timer loop |
+| `examples/client_server.py` | HTTP/3 GET request/response over loopback (client + server in one process) |
 
 ---
 
@@ -163,11 +178,26 @@ for event in conn.datagram_received(datagram, addr):
 <summary><strong>HTTP/3</strong> — H3Connection for request/response</summary>
 
 ```python
-from zoomies.h3 import H3Connection, H3HeadersReceived, H3DataReceived
+from zoomies.h3 import H3Connection
+from zoomies.events import H3HeadersReceived, H3DataReceived
 
-h3 = H3Connection(is_client=False)
-# Feed H3 frames from QUIC streams into h3.receive_*()
-# Handle H3HeadersReceived, H3DataReceived events
+# Wrap a QuicConnection to add HTTP/3 framing
+h3 = H3Connection(sender=quic_conn)
+
+# Client: send request
+h3.send_headers(stream_id=0, headers=[
+    (b":method", b"GET"), (b":path", b"/"),
+    (b":scheme", b"https"), (b":authority", b"localhost"),
+], end_stream=True)
+
+# Server: process QUIC events through H3
+for quic_event in events:
+    for h3_event in h3.handle_event(quic_event):
+        match h3_event:
+            case H3HeadersReceived(headers=hdrs):
+                ...
+            case H3DataReceived(data=body):
+                ...
 ```
 
 </details>

@@ -5,13 +5,17 @@ from zoomies.crypto.quic_crypto import (
     derive_key_iv_hp,
 )
 from zoomies.crypto.tls import (
+    ClientTlsState,
+    QuicClientTlsContext,
     QuicTlsContext,
     TlsHandshakeResult,
     TlsHandshakeState,
 )
 
 __all__ = [
+    "ClientTlsState",
     "CryptoPair",
+    "QuicClientTlsContext",
     "QuicTlsContext",
     "TlsHandshakeResult",
     "TlsHandshakeState",

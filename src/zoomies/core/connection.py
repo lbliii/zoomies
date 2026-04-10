@@ -1,4 +1,7 @@
-"""QUIC server connection — sans-I/O state machine (RFC 9000)."""
+"""QUIC connection — sans-I/O state machine (RFC 9000).
+
+Supports both client and server roles. Set QuicConfiguration.is_client=True for client mode.
+"""
 
 import bisect
 import os
@@ -8,7 +11,7 @@ from cryptography.exceptions import InvalidTag
 
 from zoomies.core.configuration import QuicConfiguration
 from zoomies.core.stream import Stream
-from zoomies.crypto import CryptoPair, QuicTlsContext
+from zoomies.crypto import CryptoPair, QuicClientTlsContext, QuicTlsContext
 from zoomies.encoding import Buffer
 from zoomies.events import (
     ConnectionClosed,
@@ -26,12 +29,17 @@ from zoomies.frames.ack import AckFrame, RangeSet, pull_ack_frame, push_ack_fram
 from zoomies.frames.common import (
     ConnectionCloseFrame,
     PingFrame,
+    pull_connection_close,
     pull_padding_frame,
     pull_ping_frame,
     push_connection_close,
     push_ping_frame,
 )
-from zoomies.frames.connection_id import pull_retire_connection_id, push_new_connection_id
+from zoomies.frames.connection_id import (
+    pull_new_connection_id,
+    pull_retire_connection_id,
+    push_new_connection_id,
+)
 from zoomies.frames.crypto import CryptoFrame, pull_crypto_frame, push_crypto_frame
 from zoomies.frames.stream import (
     StreamFrame,
@@ -104,15 +112,20 @@ def _merge_crypto_ranges(ranges: list[tuple[int, bytes]]) -> list[tuple[int, byt
 
 
 class QuicConnection:
-    """QUIC server connection — datagram_received, send_datagrams."""
+    """QUIC connection — datagram_received, send_datagrams.
+
+    Supports both client and server roles via config.is_client.
+    """
 
     def __init__(self, config: QuicConfiguration) -> None:
         self._config = config
+        self._is_client = config.is_client
         self._state = ConnectionState.INITIAL
         self._initial_crypto: CryptoPair | None = None
         self._handshake_crypto: CryptoPair | None = None
         self._one_rtt_crypto: CryptoPair | None = None
         self._tls_ctx: QuicTlsContext | None = None
+        self._client_tls_ctx: QuicClientTlsContext | None = None
         self._our_cid = b""
         self._peer_cid = b""
         self._peer_addr: tuple[str, int] = ("", 0)
@@ -120,9 +133,16 @@ class QuicConnection:
         self._initial_pn = 0
         self._handshake_pn = 0
         self._one_rtt_pn = 0
+        # Receive packet number tracking (expected next PN per level)
+        self._initial_recv_pn = 0
+        self._handshake_recv_pn = 0
+        self._one_rtt_recv_pn = 0
         self._stream_send_queue: list[tuple[int, bytes, bool]] = []
-        self._crypto_recv: list[tuple[int, bytes]] = []
-        self._crypto_fed = 0
+        # Separate CRYPTO buffers per encryption level (RFC 9000 §19.6)
+        self._initial_crypto_recv: list[tuple[int, bytes]] = []
+        self._initial_crypto_fed = 0
+        self._handshake_crypto_recv: list[tuple[int, bytes]] = []
+        self._handshake_crypto_fed = 0
         self._our_cids: set[bytes] = set()
         self._sequence_to_cid: dict[int, bytes] = {}
         self._next_cid_sequence = 0
@@ -148,7 +168,8 @@ class QuicConnection:
         # Anti-amplification (RFC 9000 §8): limit response before address validation
         self._bytes_received = 0
         self._bytes_sent = 0
-        self._address_validated = False
+        # Client is never subject to anti-amplification limits
+        self._address_validated = config.is_client
         # Retransmission queues for lost frames
         self._crypto_retransmit: list[tuple[int, bytes]] = []  # (offset, data)
         self._handshake_done_pending = False
@@ -173,6 +194,72 @@ class QuicConnection:
                 stream.set_max_stream_data(self._config.max_stream_data)
             self._streams[sid] = stream
         return self._streams[sid]
+
+    def connect(self) -> None:
+        """Generate Initial packet with ClientHello. Client mode only. Call once."""
+        if not self._is_client:
+            raise RuntimeError("connect() is only for client mode")
+        self._our_cid = os.urandom(8)
+        self._our_cids = {self._our_cid}
+        self._sequence_to_cid = {0: self._our_cid}
+        self._next_cid_sequence = 1
+        # Client picks a random destination CID for the Initial packet
+        self._peer_cid = os.urandom(8)
+        # Initial keys derived from destination CID (RFC 9001 §5.2)
+        self._initial_crypto = CryptoPair()
+        self._initial_crypto.setup_initial(cid=self._peer_cid, is_client=True)
+        self._client_tls_ctx = QuicClientTlsContext(
+            ca_certs=self._config.ca_certs,
+            verify_mode=self._config.verify_mode,
+            server_name=self._config.server_name,
+        )
+        client_hello = self._client_tls_ctx.build_client_hello()
+        self._queue_initial_client_hello(client_hello)
+
+    def _queue_initial_client_hello(self, client_hello: bytes) -> None:
+        """Queue Initial packet containing ClientHello CRYPTO frame."""
+        if not self._initial_crypto:
+            return
+        payload_buf = Buffer()
+        push_crypto_frame(payload_buf, CryptoFrame(offset=0, data=client_hello))
+        # Build header first to get its actual size for padding calculation
+        pn = self._initial_pn
+        # Use a dummy payload length to measure header size (varint length is stable)
+        probe_buf = Buffer()
+        push_initial_packet_header(
+            probe_buf,
+            destination_cid=self._peer_cid,
+            source_cid=self._our_cid,
+            token=b"",
+            payload_length=1200,  # dummy — just for header size measurement
+        )
+        header_len = len(probe_buf.data)
+        # Pad with PADDING frames to meet 1200-byte minimum (RFC 9000 §14.1)
+        min_payload = MTU - header_len - PN_SIZE - AEAD_TAG_SIZE
+        if len(payload_buf.data) < min_payload:
+            payload_buf.push_bytes(b"\x00" * (min_payload - len(payload_buf.data)))
+        plain_payload = payload_buf.data
+        header_buf = Buffer()
+        ciphertext_len = PN_SIZE + len(plain_payload) + AEAD_TAG_SIZE
+        push_initial_packet_header(
+            header_buf,
+            destination_cid=self._peer_cid,
+            source_cid=self._our_cid,
+            token=b"",
+            payload_length=ciphertext_len,
+        )
+        plain_header = header_buf.data
+        encrypted = self._initial_crypto.encrypt_packet(plain_header, plain_payload, pn)
+        self._send_queue.append(encrypted)
+        self._initial_space.on_packet_sent(
+            packet_number=pn,
+            sent_time=self._now,
+            sent_bytes=len(encrypted),
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentCryptoFrame(offset=0, length=len(client_hello)),),
+        )
+        self._initial_pn += 1
 
     def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool = False) -> None:
         """Queue stream data for sending (H3StreamSender protocol)."""
@@ -217,9 +304,22 @@ class QuicConnection:
     def _handle_initial(
         self, data: bytes, buf: Buffer, header: LongHeader, events: list[QuicEvent]
     ) -> None:
-        """Handle Initial packet."""
+        """Handle Initial packet (server receives ClientHello, client receives ServerHello)."""
         encrypted_offset = buf.tell()
 
+        if self._is_client:
+            self._handle_initial_client(data, encrypted_offset, header, events)
+        else:
+            self._handle_initial_server(data, encrypted_offset, header, events)
+
+    def _handle_initial_server(
+        self,
+        data: bytes,
+        encrypted_offset: int,
+        header: LongHeader,
+        events: list[QuicEvent],
+    ) -> None:
+        """Server: handle Initial packet containing ClientHello."""
         if self._state == ConnectionState.INITIAL:
             self._our_cid = header.destination_cid
             self._our_cids = {self._our_cid}
@@ -238,14 +338,42 @@ class QuicConnection:
 
         try:
             _ph, plain_payload, pn = self._initial_crypto.decrypt_packet(
-                data, encrypted_offset, self._initial_pn
+                data, encrypted_offset, self._initial_recv_pn
             )
+            self._initial_recv_pn = pn + 1
             self._initial_ack_ranges.add(pn)
             self._ack_needed_initial = True
             self._state = ConnectionState.HANDSHAKE
             self._queue_initial_response(now=self._now)
-            self._parse_payload_frames(plain_payload, events)
-            self._feed_crypto_to_tls(events)
+            self._parse_payload_frames(plain_payload, events, crypto_level="initial")
+            self._feed_crypto_to_tls(events, level="initial")
+        except InvalidTag:
+            events.append(DecryptionFailed(packet_type="initial"))
+
+    def _handle_initial_client(
+        self,
+        data: bytes,
+        encrypted_offset: int,
+        header: LongHeader,
+        events: list[QuicEvent],
+    ) -> None:
+        """Client: handle server's Initial packet (ServerHello in CRYPTO)."""
+        if not self._initial_crypto:
+            return
+        # Server may use a different source CID than what we sent to
+        if self._state == ConnectionState.INITIAL:
+            self._peer_cid = header.source_cid
+
+        try:
+            _ph, plain_payload, pn = self._initial_crypto.decrypt_packet(
+                data, encrypted_offset, self._initial_recv_pn
+            )
+            self._initial_recv_pn = pn + 1
+            self._initial_ack_ranges.add(pn)
+            self._ack_needed_initial = True
+            self._state = ConnectionState.HANDSHAKE
+            self._parse_payload_frames(plain_payload, events, crypto_level="initial")
+            self._feed_crypto_to_tls(events, level="initial")
         except InvalidTag:
             events.append(DecryptionFailed(packet_type="initial"))
 
@@ -258,12 +386,13 @@ class QuicConnection:
         encrypted_offset = buf.tell()
         try:
             _ph, plain_payload, pn = self._handshake_crypto.decrypt_packet(
-                data, encrypted_offset, self._handshake_pn
+                data, encrypted_offset, self._handshake_recv_pn
             )
+            self._handshake_recv_pn = pn + 1
             self._handshake_ack_ranges.add(pn)
             self._ack_needed_handshake = True
-            self._parse_payload_frames(plain_payload, events)
-            self._feed_crypto_to_tls(events)
+            self._parse_payload_frames(plain_payload, events, crypto_level="handshake")
+            self._feed_crypto_to_tls(events, level="handshake")
         except InvalidTag:
             events.append(DecryptionFailed(packet_type="handshake"))
 
@@ -271,26 +400,36 @@ class QuicConnection:
         self, data: bytes, buf: Buffer, header: ShortHeader, events: list[QuicEvent]
     ) -> None:
         """Handle Short header (1-RTT)."""
-        if self._state != ConnectionState.ONE_RTT or not self._one_rtt_crypto:
+        # Client may receive 1-RTT packets (with HANDSHAKE_DONE) while still in HANDSHAKE state
+        if not self._one_rtt_crypto:
+            return
+        if self._state not in (ConnectionState.ONE_RTT, ConnectionState.HANDSHAKE):
             return
         encrypted_offset = buf.tell()
         try:
             _ph, plain_payload, pn = self._one_rtt_crypto.decrypt_packet(
-                data, encrypted_offset, self._one_rtt_pn
+                data, encrypted_offset, self._one_rtt_recv_pn
             )
+            self._one_rtt_recv_pn = pn + 1
             self._application_ack_ranges.add(pn)
             self._ack_needed_application = True
             self._parse_payload_frames(plain_payload, events)
         except InvalidTag:
             events.append(DecryptionFailed(packet_type="1rtt"))
 
-    def _feed_crypto_to_tls(self, events: list[QuicEvent]) -> None:
+    def _feed_crypto_to_tls(self, events: list[QuicEvent], *, level: str = "initial") -> None:
         """Feed contiguous CRYPTO data to TLS, queue Handshake packets."""
-        if not self._tls_ctx:
-            return
-        merged = _merge_crypto_ranges(self._crypto_recv)
+        # Select the correct CRYPTO buffer for this encryption level
+        if level == "initial":
+            crypto_recv = self._initial_crypto_recv
+            crypto_fed = self._initial_crypto_fed
+        else:
+            crypto_recv = self._handshake_crypto_recv
+            crypto_fed = self._handshake_crypto_fed
+
+        merged = _merge_crypto_ranges(crypto_recv)
         parts: list[bytes] = []
-        new_fed = self._crypto_fed
+        new_fed = crypto_fed
         for start, data in merged:
             if start <= new_fed:
                 end = start + len(data)
@@ -299,18 +438,49 @@ class QuicConnection:
                     new_fed = end
             else:
                 break
-        self._crypto_fed = new_fed
-        # Prune consumed ranges
-        self._crypto_recv = [(s, d) for s, d in self._crypto_recv if s + len(d) > new_fed]
+
+        # Update the correct fed counter
+        if level == "initial":
+            self._initial_crypto_fed = new_fed
+            self._initial_crypto_recv = [
+                (s, d) for s, d in self._initial_crypto_recv if s + len(d) > new_fed
+            ]
+        else:
+            self._handshake_crypto_fed = new_fed
+            self._handshake_crypto_recv = [
+                (s, d) for s, d in self._handshake_crypto_recv if s + len(d) > new_fed
+            ]
+
         if not parts:
             return
         to_feed = b"".join(parts)
-        result = self._tls_ctx.receive(to_feed)
+
+        if self._is_client:
+            self._feed_crypto_to_client_tls(to_feed, events)
+        else:
+            self._feed_crypto_to_server_tls(to_feed, events)
+
+    def _feed_crypto_to_server_tls(self, data: bytes, events: list[QuicEvent]) -> None:
+        """Server: feed CRYPTO data to server TLS context."""
+        if not self._tls_ctx:
+            return
+        result = self._tls_ctx.receive(data)
         if result.handshake_secret and not self._handshake_crypto:
             self._handshake_crypto = CryptoPair()
             self._handshake_crypto.setup_handshake(result.handshake_secret, is_client=False)
         if result.data_to_send:
-            self._queue_handshake_response(result.data_to_send)
+            # Split TLS data: ServerHello goes in Initial CRYPTO, rest in Handshake CRYPTO
+            # ServerHello is the first message (type 0x02)
+            tls_data = result.data_to_send
+            if tls_data and tls_data[0] == 0x02:
+                sh_len = 4 + int.from_bytes(tls_data[1:4], "big")
+                server_hello = tls_data[:sh_len]
+                handshake_data = tls_data[sh_len:]
+                self._queue_initial_crypto_response(server_hello)
+                if handshake_data:
+                    self._queue_handshake_response(handshake_data)
+            else:
+                self._queue_handshake_response(tls_data)
         if result.traffic_secret and not self._one_rtt_crypto:
             self._one_rtt_crypto = CryptoPair()
             self._one_rtt_crypto.setup_1rtt(result.traffic_secret, is_client=False)
@@ -320,8 +490,29 @@ class QuicConnection:
             self._queue_new_connection_id(events)
             self._queue_handshake_done()
 
+    def _feed_crypto_to_client_tls(self, data: bytes, events: list[QuicEvent]) -> None:
+        """Client: feed CRYPTO data to client TLS context."""
+        if not self._client_tls_ctx:
+            return
+        result = self._client_tls_ctx.receive(data)
+        if result.handshake_secret and not self._handshake_crypto:
+            self._handshake_crypto = CryptoPair()
+            self._handshake_crypto.setup_handshake(result.handshake_secret, is_client=True)
+        if result.data_to_send:
+            # Client Finished — send in Handshake packet
+            self._queue_handshake_response(result.data_to_send)
+        if result.traffic_secret and not self._one_rtt_crypto:
+            self._one_rtt_crypto = CryptoPair()
+            self._one_rtt_crypto.setup_1rtt(result.traffic_secret, is_client=True)
+            # Client doesn't emit HandshakeComplete yet — wait for HANDSHAKE_DONE
+
     def _parse_payload_frames(
-        self, payload: bytes, events: list[QuicEvent], *, is_0rtt: bool = False
+        self,
+        payload: bytes,
+        events: list[QuicEvent],
+        *,
+        is_0rtt: bool = False,
+        crypto_level: str = "initial",
     ) -> None:
         """Parse QUIC frames from decrypted payload; collect CRYPTO for TLS."""
         buf = Buffer(data=payload)
@@ -357,16 +548,37 @@ class QuicConnection:
                     )
                 elif first == CRYPTO_FRAME_TYPE:
                     frame = pull_crypto_frame(buf)
-                    bisect.insort(self._crypto_recv, (frame.offset, frame.data))
+                    if crypto_level == "initial":
+                        bisect.insort(self._initial_crypto_recv, (frame.offset, frame.data))
+                    else:
+                        bisect.insort(self._handshake_crypto_recv, (frame.offset, frame.data))
+                elif first == 0x18:
+                    frame = pull_new_connection_id(buf)
+                    # Store the new CID for potential use
+                    self._sequence_to_cid[frame.sequence] = frame.connection_id
                 elif first == 0x19:
                     frame = pull_retire_connection_id(buf)
                     cid = self._sequence_to_cid.pop(frame.sequence, None)
                     if cid is not None:
                         self._our_cids.discard(cid)
                         events.append(ConnectionIdRetired(connection_id=cid))
+                elif first in (0x1C, 0x1D):
+                    buf.pull_uint_var()  # consume frame type
+                    frame = pull_connection_close(buf)
+                    self._state = ConnectionState.CLOSED
+                    events.append(
+                        ConnectionClosed(
+                            error_code=frame.error_code,
+                            reason=frame.reason_phrase.decode("utf-8", errors="replace"),
+                        )
+                    )
+                    return
                 elif first == HANDSHAKE_DONE_FRAME_TYPE:
                     buf.pull_uint_var()  # consume frame type
-                elif (first & 0x08) == 0x08:
+                    if self._is_client and self._one_rtt_crypto:
+                        self._state = ConnectionState.ONE_RTT
+                        events.append(HandshakeComplete())
+                elif 0x08 <= first <= 0x0F:
                     frame = pull_stream_frame(buf)
                     stream = self._get_or_create_stream(frame.stream_id)
                     if not stream._recv.flow_control_ok(frame.offset, len(frame.data)):
@@ -503,6 +715,36 @@ class QuicConnection:
             frames=(SentHandshakeDoneFrame(),),
         )
         self._one_rtt_pn += 1
+
+    def _queue_initial_crypto_response(self, tls_data: bytes) -> None:
+        """Queue Initial packet with CRYPTO frame (e.g., ServerHello)."""
+        if not self._initial_crypto or not self._our_cid or not self._peer_cid:
+            return
+        payload_buf = Buffer()
+        push_crypto_frame(payload_buf, CryptoFrame(offset=0, data=tls_data))
+        plain_payload = payload_buf.data
+        pn = self._initial_pn
+        header_buf = Buffer()
+        ciphertext_len = PN_SIZE + len(plain_payload) + AEAD_TAG_SIZE
+        push_initial_packet_header(
+            header_buf,
+            destination_cid=self._peer_cid,
+            source_cid=self._our_cid,
+            token=b"",
+            payload_length=ciphertext_len,
+        )
+        plain_header = header_buf.data
+        encrypted = self._initial_crypto.encrypt_packet(plain_header, plain_payload, pn)
+        self._send_queue.append(encrypted)
+        self._initial_space.on_packet_sent(
+            packet_number=pn,
+            sent_time=self._now,
+            sent_bytes=len(encrypted),
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentCryptoFrame(offset=0, length=len(tls_data)),),
+        )
+        self._initial_pn += 1
 
     def _queue_initial_response(self, now: float = 0.0) -> None:
         """Queue server Initial packet."""
@@ -748,18 +990,10 @@ class QuicConnection:
     def _optimal_pn_length(self) -> int:
         """Compute optimal packet number encoding length (RFC 9000 17.1).
 
-        Uses the distance from the largest acknowledged PN to encode
-        the minimum number of bytes needed.
+        Always returns 4 for now — the decrypt side hardcodes 4-byte PN
+        parsing. Variable-length PN requires a two-pass header protection
+        removal (RFC 9001 5.4.2) which isn't implemented yet.
         """
-        largest_acked = self._application_space.largest_acked_packet
-        if largest_acked is None:
-            return 4  # no ACK yet, use full 4 bytes
-        pn = self._one_rtt_pn
-        distance = pn - largest_acked
-        if distance < 0x80:
-            return 1
-        if distance < 0x8000:
-            return 2
         return 4
 
     def _encrypt_short_packet(

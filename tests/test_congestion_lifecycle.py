@@ -307,19 +307,19 @@ def test_optimal_pn_length_no_ack() -> None:
 
 
 def test_optimal_pn_length_small_distance() -> None:
-    """Small distance from largest_acked uses 1-byte PN."""
+    """Always returns 4 — variable PN encoding not yet supported on decrypt side."""
     conn = _make_server_conn()
     conn._application_space.largest_acked_packet = 10
     conn._one_rtt_pn = 11  # distance = 1
-    assert conn._optimal_pn_length() == 1
+    assert conn._optimal_pn_length() == 4
 
 
 def test_optimal_pn_length_medium_distance() -> None:
-    """Medium distance uses 2-byte PN."""
+    """Always returns 4 — variable PN encoding not yet supported on decrypt side."""
     conn = _make_server_conn()
     conn._application_space.largest_acked_packet = 0
     conn._one_rtt_pn = 0x100  # distance = 256
-    assert conn._optimal_pn_length() == 2
+    assert conn._optimal_pn_length() == 4
 
 
 def test_optimal_pn_length_large_distance() -> None:

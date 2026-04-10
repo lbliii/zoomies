@@ -5,7 +5,7 @@ Guiding design document for the Zoomies QUIC/HTTP3 library.
 ## Vision
 
 - **Sans-I/O QUIC/HTTP3** for Python 3.14t
-- **Server-first** — initial implementation serves HTTP/3; client and multipath later
+- **Client + Server** — both sides of the QUIC connection; HTTP/3 requests and responses
 - **Native to Pounce; usable standalone** — Pounce's H3Worker consumes zoomies; `pounce[h3]` depends on zoomies. Zero dependencies on Pounce, Chirp, or Bengal. Caller provides I/O.
 
 ## Principles

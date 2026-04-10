@@ -50,17 +50,18 @@ class TestPullQuicHeader:
         assert header.payload_length == 100
 
     def test_short_header(self) -> None:
-        # Short: 0100 0xxx (fixed, spin, reserved, kp, pn_len=01 -> 2 bytes)
+        # Short header always reads 4-byte PN (values are header-protected on wire,
+        # decrypt_packet handles actual PN extraction after header protection removal)
         buf = Buffer()
-        buf.push_uint8(0x41)  # short, fixed, pn_len=2
+        buf.push_uint8(0x43)  # short, fixed, pn_len=4
         buf.push_bytes(b"12345678")  # 8-byte dcid
-        buf.push_uint16(42)  # packet number
+        buf.push_uint32(42)  # packet number (4 bytes)
         buf.seek(0)
         header = pull_quic_header(buf, host_cid_length=8)
         assert isinstance(header, ShortHeader)
         assert header.destination_cid == b"12345678"
         assert header.packet_number == 42
-        assert header.packet_number_size == 2
+        assert header.packet_number_size == 4
 
 
 class TestTransportParams:
