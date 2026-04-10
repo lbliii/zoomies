@@ -30,6 +30,12 @@ decoded = decode_headers(encoded)
 
 Zoomies uses the QPACK static table with O(1) dict lookup and a bytes-native encode path.
 
+### Dynamic table
+
+As of 0.3.0, Zoomies supports the QPACK dynamic table (RFC 9204). Repeated headers are indexed into a size-bounded table, compressing them ~60% smaller on subsequent requests.
+
+The dynamic table is negotiated automatically via HTTP/3 SETTINGS. Encoder and decoder instruction streams handle table synchronization between peers. No application-level configuration is needed — `H3Connection` manages capacity negotiation and eviction internally.
+
 ## H3Connection
 
 ```python

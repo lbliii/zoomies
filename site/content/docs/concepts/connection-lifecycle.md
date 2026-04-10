@@ -10,6 +10,23 @@ A QUIC connection progresses through well-defined states. Zoomies models each as
 
 ```
 Initial → Handshake → 1-RTT (application data) → Close
+                 ↑
+   0-RTT ────────┘  (resumption with early data)
+```
+
+## Client connect
+
+Clients initiate the handshake by calling `connect()`:
+
+```python
+from zoomies.core import QuicConnection, QuicConfiguration
+
+client = QuicConnection(QuicConfiguration(is_client=True))
+client.connect()
+
+# Send the Initial packet
+for dg in client.send_datagrams():
+    sock.sendto(dg, server_addr)
 ```
 
 ## Handshake
@@ -27,6 +44,38 @@ for event in events:
         # Connection is ready for application data
         ...
 ```
+
+## 0-RTT early data
+
+When a client reconnects with a session ticket from a previous connection, it can send application data in the very first flight — before the handshake completes.
+
+```python
+from zoomies.crypto.tls import SessionTicket
+
+# Reconnect with a stored ticket
+config = QuicConfiguration(is_client=True, session_ticket=stored_ticket)
+client = QuicConnection(config)
+client.connect()
+
+# Send early data immediately — no waiting for HandshakeComplete
+client.send_stream_data(stream_id, b"early request")
+```
+
+The server decides whether to accept or reject 0-RTT data using a `ZeroRttPolicy`:
+
+```python
+class MyPolicy:
+    def allow_0rtt(self, ticket_data: bytes, obfuscated_age: int) -> bool:
+        # Accept if ticket is fresh enough
+        return True
+
+config = QuicConfiguration(
+    certificate=cert, private_key=key,
+    zero_rtt_policy=MyPolicy(),
+)
+```
+
+The client receives either a `ZeroRttAccepted` or `ZeroRttRejected` event. On rejection, Zoomies automatically resends streams as 1-RTT data.
 
 ## Streams
 
