@@ -135,10 +135,9 @@ def test_e2e_0rtt_rejected_then_1rtt() -> None:
     _transfer(server2, client2)
     server_events2 = _transfer(client2, server2)
 
-    all_stream = (
-        [e for e in server_events if isinstance(e, StreamDataReceived)]
-        + [e for e in server_events2 if isinstance(e, StreamDataReceived)]
-    )
+    all_stream = [e for e in server_events if isinstance(e, StreamDataReceived)] + [
+        e for e in server_events2 if isinstance(e, StreamDataReceived)
+    ]
     assert any(e.data == b"will be rejected" for e in all_stream)
 
 

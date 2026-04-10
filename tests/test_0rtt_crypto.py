@@ -101,9 +101,7 @@ def test_client_early_traffic_secret_derivation() -> None:
     early_secret, ch_hash = _psk_handshake_with_early_secret(server_ticket, client_ticket)
 
     # Derive manually
-    cets = hkdf_expand_label(
-        hashes.SHA256, early_secret, b"c e traffic", ch_hash, 32
-    )
+    cets = hkdf_expand_label(hashes.SHA256, early_secret, b"c e traffic", ch_hash, 32)
     assert len(cets) == 32
     assert cets != bytes(32)
 
@@ -230,6 +228,4 @@ def test_0rtt_wrong_key_fails_decrypt() -> None:
     encrypted = client_pair.encrypt_packet(header, b"secret data", packet_number=0)
 
     with pytest.raises(InvalidTag):
-        wrong_pair.decrypt_packet(
-            encrypted, encrypted_offset=len(header), expected_packet_number=0
-        )
+        wrong_pair.decrypt_packet(encrypted, encrypted_offset=len(header), expected_packet_number=0)

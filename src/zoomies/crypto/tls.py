@@ -396,7 +396,7 @@ class QuicTlsContext:
                     )
                 else:
                     break
-            except (ValueError, BufferReadError):
+            except ValueError, BufferReadError:
                 if self._state == TlsHandshakeState.START:
                     self._state = TlsHandshakeState.CLIENT_HELLO_RECEIVED
                 else:
@@ -461,7 +461,9 @@ class QuicTlsContext:
 
         self._server_random = os.urandom(32)
         server_hello = _build_server_hello(
-            self._server_random, ch_info.session_id, key_share,
+            self._server_random,
+            ch_info.session_id,
+            key_share,
             psk_identity=psk_identity_index,
         )
         self._handshake_hash.update(server_hello)

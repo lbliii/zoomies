@@ -116,6 +116,7 @@ def test_client_sends_0rtt_packets() -> None:
         try:
             header = pull_quic_header(buf, host_cid_length=8)
             from zoomies.packet.header import LongHeader
+
             if isinstance(header, LongHeader) and header.packet_type == PACKET_TYPE_ZERO_RTT:
                 zero_rtt_found = True
                 break
@@ -312,10 +313,9 @@ def test_0rtt_rejection_resends_as_1rtt() -> None:
     _transfer(server, client)
 
     # Check that server received the data via 1-RTT (in either round)
-    all_stream_events = (
-        [e for e in server_events if isinstance(e, StreamDataReceived)]
-        + [e for e in server_events2 if isinstance(e, StreamDataReceived)]
-    )
+    all_stream_events = [e for e in server_events if isinstance(e, StreamDataReceived)] + [
+        e for e in server_events2 if isinstance(e, StreamDataReceived)
+    ]
     assert any(e.data == b"retry me" for e in all_stream_events)
 
 

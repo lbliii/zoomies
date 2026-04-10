@@ -357,8 +357,13 @@ def test_0rtt_multiple_packets_increment_pn() -> None:
     for pn in range(3):
         payload = f"packet {pn}".encode()
         pkt = _build_0rtt_packet(
-            dest_cid, src_cid, client_0rtt,
-            stream_id=0, data=payload, pn=pn, offset=stream_offset,
+            dest_cid,
+            src_cid,
+            client_0rtt,
+            stream_id=0,
+            data=payload,
+            pn=pn,
+            offset=stream_offset,
         )
         stream_offset += len(payload)
         events = server.datagram_received(pkt, ADDR)

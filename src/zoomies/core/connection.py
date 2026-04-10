@@ -539,9 +539,7 @@ class QuicConnection:
                     stream = self._get_or_create_stream(StreamId(frame.stream_id))
                     data = stream._send.get_data(frame.offset, frame.length)
                     if data:
-                        self._stream_send_queue.append(
-                            (frame.stream_id, data, frame.fin)
-                        )
+                        self._stream_send_queue.append((frame.stream_id, data, frame.fin))
                         resend_streams.add(frame.stream_id)
         # Reset stream send state so 1-RTT resend starts from offset 0
         for sid in resend_streams:
@@ -612,18 +610,12 @@ class QuicConnection:
             self._handshake_crypto.setup_handshake(result.handshake_secret, is_client=True)
         # Check 0-RTT acceptance/rejection after EE is processed
         # Only check once the client TLS state has moved past WAIT_ENCRYPTED_EXTENSIONS
-        ee_processed = (
-            self._client_tls_ctx.state not in (
-                ClientTlsState.START,
-                ClientTlsState.WAIT_SERVER_HELLO,
-                ClientTlsState.WAIT_ENCRYPTED_EXTENSIONS,
-            )
+        ee_processed = self._client_tls_ctx.state not in (
+            ClientTlsState.START,
+            ClientTlsState.WAIT_SERVER_HELLO,
+            ClientTlsState.WAIT_ENCRYPTED_EXTENSIONS,
         )
-        if (
-            self._zero_rtt_crypto is not None
-            and self._zero_rtt_accepted is None
-            and ee_processed
-        ):
+        if self._zero_rtt_crypto is not None and self._zero_rtt_accepted is None and ee_processed:
             if result.early_data_accepted:
                 self._zero_rtt_accepted = True
                 events.append(ZeroRttAccepted())
@@ -1098,9 +1090,7 @@ class QuicConnection:
                 payload_length=ciphertext_len,
             )
             plain_header = header_buf.data
-            encrypted = self._zero_rtt_crypto.encrypt_packet(
-                plain_header, plain_payload, pn
-            )
+            encrypted = self._zero_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
             packets.append(encrypted)
             self._application_space.on_packet_sent(
                 packet_number=pn,

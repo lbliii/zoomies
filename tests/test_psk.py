@@ -164,9 +164,7 @@ def test_psk_clienthello_has_extensions() -> None:
     client_ticket = client_ctx.receive_new_session_ticket(nst_msg)
 
     # Build a new ClientHello with the ticket
-    psk_client = QuicClientTlsContext(
-        verify_mode=False, session_ticket=client_ticket
-    )
+    psk_client = QuicClientTlsContext(verify_mode=False, session_ticket=client_ticket)
     ch = psk_client.build_client_hello()
 
     # Parse and verify PSK extensions are present
@@ -189,9 +187,7 @@ def test_psk_handshake_loopback() -> None:
     server_ctx2 = QuicTlsContext(certificate=CERT, private_key=KEY)
     server_ctx2.add_session_ticket(server_ticket)
 
-    psk_client = QuicClientTlsContext(
-        verify_mode=False, session_ticket=client_ticket
-    )
+    psk_client = QuicClientTlsContext(verify_mode=False, session_ticket=client_ticket)
     ch = psk_client.build_client_hello()
 
     # Step 3: Server processes PSK ClientHello
@@ -235,9 +231,7 @@ def test_psk_handshake_wrong_ticket_falls_back_to_full() -> None:
     server_ctx2 = QuicTlsContext(certificate=CERT, private_key=KEY)
     # Don't call add_session_ticket — server doesn't know this ticket
 
-    psk_client = QuicClientTlsContext(
-        verify_mode=False, session_ticket=client_ticket
-    )
+    psk_client = QuicClientTlsContext(verify_mode=False, session_ticket=client_ticket)
     ch = psk_client.build_client_hello()
 
     # Server processes — should do full handshake (no PSK)
@@ -260,9 +254,7 @@ def test_psk_handshake_server_can_issue_new_ticket() -> None:
     # PSK handshake
     server_ctx2 = QuicTlsContext(certificate=CERT, private_key=KEY)
     server_ctx2.add_session_ticket(server_ticket)
-    psk_client = QuicClientTlsContext(
-        verify_mode=False, session_ticket=client_ticket
-    )
+    psk_client = QuicClientTlsContext(verify_mode=False, session_ticket=client_ticket)
     ch = psk_client.build_client_hello()
     server_result = server_ctx2.receive(ch)
     server_flight = server_result.data_to_send
@@ -297,9 +289,7 @@ def test_psk_flight_is_shorter_than_full() -> None:
 
     psk_server = QuicTlsContext(certificate=CERT, private_key=KEY)
     psk_server.add_session_ticket(server_ticket)
-    psk_client = QuicClientTlsContext(
-        verify_mode=False, session_ticket=client_ticket
-    )
+    psk_client = QuicClientTlsContext(verify_mode=False, session_ticket=client_ticket)
     psk_ch = psk_client.build_client_hello()
     psk_result = psk_server.receive(psk_ch)
     psk_flight_len = len(psk_result.data_to_send)
