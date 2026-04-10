@@ -1,4 +1,6 @@
-"""HTTP/3 connection — receive H3 frames, emit H3HeadersReceived, H3DataReceived."""
+"""HTTP/3 connection -- receive H3 frames, emit H3HeadersReceived, H3DataReceived."""
+
+from __future__ import annotations
 
 from typing import Protocol
 
@@ -11,7 +13,12 @@ from zoomies.events import (
     QuicEvent,
     StreamDataReceived,
 )
-from zoomies.h3.qpack import decode_headers, encode_headers_from_bytes
+from zoomies.h3.qpack import (
+    QpackDecoder,
+    QpackEncoder,
+    decode_headers,
+    encode_headers_from_bytes,
+)
 
 # RFC 9114: HTTP/3 frame types
 H3_FRAME_DATA = 0x00
@@ -21,7 +28,9 @@ H3_FRAME_HEADERS = 0x01
 class H3StreamSender(Protocol):
     """Protocol for sending H3 stream data into the QUIC layer. Implemented by QuicConnection."""
 
-    def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool) -> None: ...
+    def send_stream_data(
+        self, stream_id: int, data: bytes, end_stream: bool
+    ) -> None: ...
 
 
 def _encode_frame(frame_type: int, payload: bytes) -> bytes:
@@ -47,11 +56,43 @@ def _parse_frame(buf: Buffer) -> tuple[int, bytes] | None:
 
 
 class H3Connection:
-    """HTTP/3 connection — parses H3 frames from stream data, emits events."""
+    """HTTP/3 connection -- parses H3 frames from stream data, emits events.
 
-    def __init__(self, sender: H3StreamSender | None = None) -> None:
+    When ``qpack_max_table_capacity > 0``, a stateful QpackEncoder/QpackDecoder
+    pair is used for header compression. Otherwise, falls back to stateless
+    static-table-only encoding (backward compatible).
+    """
+
+    def __init__(
+        self,
+        sender: H3StreamSender | None = None,
+        *,
+        qpack_max_table_capacity: int = 0,
+    ) -> None:
         self._stream_buffers: dict[int, bytearray] = {}
         self._sender = sender
+        self._qpack_max_table_capacity = qpack_max_table_capacity
+
+        if qpack_max_table_capacity > 0:
+            self._encoder: QpackEncoder | None = QpackEncoder(
+                max_table_capacity=qpack_max_table_capacity
+            )
+            self._decoder: QpackDecoder | None = QpackDecoder(
+                max_table_capacity=qpack_max_table_capacity
+            )
+            self._encoder.set_capacity(qpack_max_table_capacity)
+            self._decoder.set_capacity(qpack_max_table_capacity)
+        else:
+            self._encoder = None
+            self._decoder = None
+
+    @property
+    def encoder(self) -> QpackEncoder | None:
+        return self._encoder
+
+    @property
+    def decoder(self) -> QpackDecoder | None:
+        return self._decoder
 
     def handle_event(self, event: QuicEvent) -> list[H3Event]:
         """Process QUIC event; returns H3 events for StreamDataReceived only."""
@@ -73,7 +114,18 @@ class H3Connection:
         """Send HTTP/3 HEADERS frame. Requires sender in constructor."""
         if self._sender is None:
             raise RuntimeError("H3Connection needs sender for send_headers")
-        payload = encode_headers_from_bytes(headers)
+
+        if self._encoder is not None:
+            payload = self._encoder.encode_from_bytes(headers)
+            # Flush encoder stream instructions to sender
+            enc_data = self._encoder.encoder_stream_data()
+            if enc_data:
+                self._sender.send_stream_data(
+                    self._encoder_stream_id, enc_data, False
+                )
+        else:
+            payload = encode_headers_from_bytes(headers)
+
         frame = _encode_frame(H3_FRAME_HEADERS, payload)
         self._sender.send_stream_data(stream_id, frame, end_stream)
 
@@ -88,6 +140,11 @@ class H3Connection:
             raise RuntimeError("H3Connection needs sender for send_data")
         frame = _encode_frame(H3_FRAME_DATA, data)
         self._sender.send_stream_data(stream_id, frame, end_stream)
+
+    def feed_encoder_stream(self, data: bytes) -> None:
+        """Feed encoder stream data to the decoder."""
+        if self._decoder is not None:
+            self._decoder.feed_encoder_stream(data)
 
     def stream_data_received(
         self,
@@ -111,7 +168,10 @@ class H3Connection:
             del buf[:consumed]
 
             if frame_type == H3_FRAME_HEADERS:
-                decoded = decode_headers(frame_data)
+                if self._decoder is not None:
+                    decoded = self._decoder.decode(frame_data)
+                else:
+                    decoded = decode_headers(frame_data)
                 events.append(
                     H3HeadersReceived(
                         stream_id=stream_id,
@@ -133,3 +193,6 @@ class H3Connection:
             del self._stream_buffers[stream_id]
 
         return events
+
+    # Encoder stream uses uni stream type 0x02 (RFC 9204 SS4.2)
+    _encoder_stream_id: int = 0x02
