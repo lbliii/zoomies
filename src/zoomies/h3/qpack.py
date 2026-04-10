@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from zoomies.encoding import Buffer
 from zoomies.encoding.varint import pull_varint, push_varint
-from zoomies.h3.dynamic_table import DynamicTable
+from zoomies.h3.dynamic_table import ENTRY_OVERHEAD, DynamicTable
 from zoomies.h3.qpack_instructions import (
     _pull_prefixed_int,
     _pull_string,
@@ -177,6 +177,50 @@ def _find_static_name(name: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# RIC encoding/decoding (RFC 9204 SS4.5.1.1)
+# ---------------------------------------------------------------------------
+
+
+def _max_entries(max_table_capacity: int) -> int:
+    """Max entries that can fit in the dynamic table (RFC 9204 SS3.2.2)."""
+    return max_table_capacity // ENTRY_OVERHEAD
+
+
+def _encode_ric(ric: int, max_table_capacity: int) -> int:
+    """Encode Required Insert Count for wire format."""
+    if ric == 0:
+        return 0
+    max_ent = _max_entries(max_table_capacity)
+    if max_ent == 0:
+        return 0
+    return (ric % (2 * max_ent)) + 1
+
+
+def _decode_ric(
+    encoded_ric: int,
+    max_table_capacity: int,
+    total_inserts: int,
+) -> int:
+    """Decode Required Insert Count from wire format."""
+    if encoded_ric == 0:
+        return 0
+    max_ent = _max_entries(max_table_capacity)
+    full_range = 2 * max_ent
+    if encoded_ric > full_range:
+        raise ValueError("Encoded RIC exceeds full range")
+    max_value = total_inserts + max_ent
+    max_wrapped = (max_value // full_range) * full_range
+    ric = max_wrapped + encoded_ric - 1
+    if ric > max_value:
+        if ric <= full_range:
+            raise ValueError("Invalid RIC")
+        ric -= full_range
+    if ric == 0:
+        raise ValueError("Decoded RIC is zero but encoded was non-zero")
+    return ric
+
+
+# ---------------------------------------------------------------------------
 # Stateful QpackEncoder (uses dynamic table)
 # ---------------------------------------------------------------------------
 
@@ -184,20 +228,22 @@ def _find_static_name(name: str) -> int:
 class QpackEncoder:
     """QPACK encoder with dynamic table support (RFC 9204).
 
-    Non-blocking mode: Required Insert Count is always 0, so header blocks
-    are immediately decodable without waiting for encoder stream processing.
+    References only entries already in the table before encode() is called.
+    New entries are inserted after encoding and emitted as encoder stream
+    instructions. The decoder must process encoder stream data before
+    decoding the header block.
     """
 
     def __init__(self, max_table_capacity: int = 0) -> None:
         self._table = DynamicTable(capacity=max_table_capacity)
         self._pending_instructions = Buffer()
-        self._capacity_set = False
+        self._max_table_capacity = max_table_capacity
 
     def set_capacity(self, capacity: int) -> None:
         """Update dynamic table capacity. Emits Set Dynamic Table Capacity."""
         self._table.set_capacity(capacity)
+        self._max_table_capacity = capacity
         encode_set_capacity(self._pending_instructions, capacity)
-        self._capacity_set = True
 
     @property
     def table(self) -> DynamicTable:
@@ -208,36 +254,24 @@ class QpackEncoder:
 
         Encoding priority:
         1. Static indexed (exact match)
-        2. Dynamic indexed (exact match)
-        3. Static name ref + literal value (+ insert into dynamic table)
+        2. Dynamic indexed (exact match, already in table)
+        3. Static name ref + literal value
         4. Dynamic name ref + literal value
-        5. Full literal (+ insert into dynamic table if capacity allows)
+        5. Full literal
 
-        Returns the encoded header block (without Required Insert Count
-        or Delta Base -- we use non-blocking mode so both are 0).
+        New entries are inserted into the dynamic table after encoding.
         """
-        buf = Buffer()
-        # Required Insert Count = 0, Delta Base = 0 (non-blocking)
-        _push_prefixed_int(buf, 0x00, 8, 0)  # Required Insert Count
-        _push_prefixed_int(buf, 0x00, 7, 0)  # Delta Base (sign=0)
-
-        for h in headers:
-            self._encode_header(buf, h.name, h.value)
-        return buf.data
+        return self._do_encode(
+            [(h.name, h.value) for h in headers]
+        )
 
     def encode_from_bytes(
         self, headers: list[tuple[bytes, bytes]]
     ) -> bytes:
         """Encode headers from bytes (ASGI-compatible)."""
-        buf = Buffer()
-        _push_prefixed_int(buf, 0x00, 8, 0)
-        _push_prefixed_int(buf, 0x00, 7, 0)
-
-        for n, v in headers:
-            self._encode_header(
-                buf, n.decode("ascii"), v.decode("ascii")
-            )
-        return buf.data
+        return self._do_encode(
+            [(n.decode("ascii"), v.decode("ascii")) for n, v in headers]
+        )
 
     def encoder_stream_data(self) -> bytes:
         """Return pending encoder stream instructions and clear buffer."""
@@ -245,71 +279,105 @@ class QpackEncoder:
         self._pending_instructions = Buffer()
         return data
 
-    def _encode_header(self, buf: Buffer, name: str, value: str) -> None:
+    def _do_encode(self, headers: list[tuple[str, str]]) -> bytes:
+        # Snapshot table state — only reference entries < base
+        base = self._table.insert_count
+        max_ref_abs = -1  # track highest absolute index referenced
+        pending_inserts: list[tuple[str, str, int | None]] = []
+
+        header_buf = Buffer()
+        for name, value in headers:
+            ref_abs = self._encode_header(
+                header_buf, name, value, base, pending_inserts
+            )
+            if ref_abs is not None and ref_abs > max_ref_abs:
+                max_ref_abs = ref_abs
+
+        # Compute RIC and Base
+        ric = max_ref_abs + 1 if max_ref_abs >= 0 else 0
+
+        # Build prefix: Encoded RIC + Delta Base
+        prefix = Buffer()
+        encoded_ric = _encode_ric(ric, self._max_table_capacity)
+        _push_prefixed_int(prefix, 0x00, 8, encoded_ric)
+        # Base = base (insert_count before encoding), Delta = base - ric
+        if base >= ric:
+            delta_base = base - ric
+            _push_prefixed_int(prefix, 0x00, 7, delta_base)  # S=0
+        else:
+            delta_base = ric - base - 1
+            _push_prefixed_int(prefix, 0x80, 7, delta_base)  # S=1
+
+        # Now apply pending inserts (after encoding, so refs are stable)
+        for name, value, static_ref in pending_inserts:
+            if self._table.capacity > 0:
+                self._table.insert(name, value)
+                if static_ref is not None:
+                    encode_insert_name_ref(
+                        self._pending_instructions,
+                        is_static=True,
+                        name_index=static_ref,
+                        value=value,
+                    )
+                else:
+                    encode_insert_literal(
+                        self._pending_instructions, name, value
+                    )
+
+        return prefix.data + header_buf.data
+
+    def _encode_header(
+        self,
+        buf: Buffer,
+        name: str,
+        value: str,
+        base: int,
+        pending_inserts: list[tuple[str, str, int | None]],
+    ) -> int | None:
+        """Encode one header. Returns absolute index if dynamic ref used."""
         # 1. Static exact match
         static_idx = _find_static(name, value)
         if 0 <= static_idx < 63:
-            # Indexed field line (static) -- SS4.5.2
             _push_prefixed_int(buf, 0xC0, 6, static_idx)
-            return
+            return None
 
-        # 2. Dynamic exact match
-        dyn_result = self._table.lookup(name, value)
+        # 2. Dynamic exact match (only entries before base)
+        dyn_result = self._table.lookup_absolute(name, value)
         if dyn_result is not None:
-            rel_idx, exact = dyn_result
-            if exact:
-                # Indexed field line (dynamic) -- SS4.5.2
-                # T=0 (dynamic), 6-bit prefix
+            abs_idx, exact = dyn_result
+            if exact and abs_idx < base:
+                # Relative index from base: base - abs_idx - 1
+                rel_idx = base - abs_idx - 1
                 _push_prefixed_int(buf, 0x80, 6, rel_idx)
-                return
+                return abs_idx
 
         # 3. Static name ref + literal value
         static_name_idx = _find_static_name(name)
         if static_name_idx >= 0:
-            # Literal with name reference (static) -- SS4.5.4
             _push_prefixed_int(buf, 0x50, 4, static_name_idx)
             _push_string(buf, value, prefix_bits=7)
-            # Insert into dynamic table
-            self._insert_with_static_ref(static_name_idx, value)
-            return
+            pending_inserts.append(
+                (STATIC_TABLE[static_name_idx][0], value, static_name_idx)
+            )
+            return None
 
-        # 4. Dynamic name ref + literal value
+        # 4. Dynamic name ref + literal value (only entries before base)
         if dyn_result is not None:
-            rel_idx, _ = dyn_result
-            # Literal with name reference (dynamic) -- SS4.5.4
-            # N=0, T=0 (dynamic), 4-bit prefix
-            _push_prefixed_int(buf, 0x40, 4, rel_idx)
-            _push_string(buf, value, prefix_bits=7)
-            # Insert into dynamic table
-            self._insert_literal(name, value)
-            return
+            abs_idx, _ = dyn_result
+            if abs_idx < base:
+                rel_idx = base - abs_idx - 1
+                _push_prefixed_int(buf, 0x40, 4, rel_idx)
+                _push_string(buf, value, prefix_bits=7)
+                pending_inserts.append((name, value, None))
+                return abs_idx
 
         # 5. Full literal
-        # Literal with literal name -- SS4.5.6
-        _push_prefixed_int(buf, 0x20, 3, len(name.encode("utf-8")))
-        buf.push_bytes(name.encode("utf-8"))
+        name_bytes = name.encode("utf-8")
+        _push_prefixed_int(buf, 0x20, 3, len(name_bytes))
+        buf.push_bytes(name_bytes)
         _push_string(buf, value, prefix_bits=7)
-        # Insert into dynamic table
-        self._insert_literal(name, value)
-
-    def _insert_with_static_ref(
-        self, static_index: int, value: str
-    ) -> None:
-        if self._table.capacity > 0:
-            self._table.insert(STATIC_TABLE[static_index][0], value)
-            encode_insert_name_ref(
-                self._pending_instructions,
-                is_static=True,
-                name_index=static_index,
-                value=value,
-            )
-
-    def _insert_literal(self, name: str, value: str) -> None:
-        if self._table.capacity > 0:
-            self._table.insert(name, value)
-            encode_insert_literal(
-                self._pending_instructions, name, value
-            )
+        pending_inserts.append((name, value, None))
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +390,7 @@ class QpackDecoder:
 
     def __init__(self, max_table_capacity: int = 0) -> None:
         self._table = DynamicTable(capacity=max_table_capacity)
+        self._max_table_capacity = max_table_capacity
 
     @property
     def table(self) -> DynamicTable:
@@ -329,6 +398,7 @@ class QpackDecoder:
 
     def set_capacity(self, capacity: int) -> None:
         self._table.set_capacity(capacity)
+        self._max_table_capacity = capacity
 
     def feed_encoder_stream(self, data: bytes) -> None:
         """Process encoder stream instructions to update dynamic table."""
@@ -354,18 +424,25 @@ class QpackDecoder:
     def decode(self, data: bytes) -> list[Header]:
         """Decode a header block with dynamic table support."""
         buf = Buffer(data=data)
-        # Required Insert Count
-        first = buf.pull_uint8()
-        ric = _pull_prefixed_int(buf, first, 8)
-        # Delta Base
-        first2 = buf.pull_uint8()
-        _pull_prefixed_int(buf, first2, 7)
 
-        if ric != 0:
-            raise ValueError(
-                "Non-zero Required Insert Count not supported "
-                "(non-blocking mode only)"
-            )
+        # Read Required Insert Count
+        first = buf.pull_uint8()
+        encoded_ric = _pull_prefixed_int(buf, first, 8)
+
+        # Read Delta Base
+        first2 = buf.pull_uint8()
+        sign = bool(first2 & 0x80)
+        delta_base = _pull_prefixed_int(buf, first2, 7)
+
+        # Decode RIC
+        ric = _decode_ric(
+            encoded_ric,
+            self._max_table_capacity,
+            self._table.insert_count,
+        )
+
+        # Compute Base
+        base = ric + delta_base if not sign else ric - delta_base - 1
 
         result: list[Header] = []
         while not buf.eof():
@@ -380,7 +457,9 @@ class QpackDecoder:
                         n, v = STATIC_TABLE[idx]
                         result.append(Header(name=n, value=v))
                 else:
-                    n, v = self._table.get(idx)
+                    # Dynamic: relative index from base
+                    abs_idx = base - idx - 1
+                    n, v = self._table.get_absolute(abs_idx)
                     result.append(Header(name=n, value=v))
 
             elif first & 0x40:
@@ -391,7 +470,8 @@ class QpackDecoder:
                 if is_static:
                     name = STATIC_TABLE[idx][0]
                 else:
-                    name, _ = self._table.get(idx)
+                    abs_idx = base - idx - 1
+                    name, _ = self._table.get_absolute(abs_idx)
                 result.append(Header(name=name, value=value))
 
             elif first & 0x20:

@@ -77,6 +77,10 @@ class DynamicTable:
         relative = self._insert_count - 1 - absolute_index
         return self.get(relative)
 
+    def relative_to_absolute(self, relative_index: int) -> int:
+        """Convert relative index (0=newest) to absolute index."""
+        return self._insert_count - 1 - relative_index
+
     def lookup(self, name: str, value: str) -> tuple[int, bool] | None:
         """Find entry by name+value. Returns (relative_index, exact_match) or None."""
         name_match: int | None = None
@@ -90,12 +94,27 @@ class DynamicTable:
             return (name_match, False)
         return None
 
+    def lookup_absolute(self, name: str, value: str) -> tuple[int, bool] | None:
+        """Find entry. Returns (absolute_index, exact_match) or None."""
+        result = self.lookup(name, value)
+        if result is None:
+            return None
+        rel_idx, exact = result
+        return (self.relative_to_absolute(rel_idx), exact)
+
     def lookup_name(self, name: str) -> int | None:
         """Find first entry with matching name. Returns relative index or None."""
         for i, (n, _, _) in enumerate(self._entries):
             if n == name:
                 return i
         return None
+
+    def lookup_name_absolute(self, name: str) -> int | None:
+        """Find first entry with matching name. Returns absolute index or None."""
+        rel = self.lookup_name(name)
+        if rel is None:
+            return None
+        return self.relative_to_absolute(rel)
 
     def _evict(self) -> None:
         """Evict oldest entries until size <= capacity."""
