@@ -549,13 +549,9 @@ class QuicConnection:
                 elif first == CRYPTO_FRAME_TYPE:
                     frame = pull_crypto_frame(buf)
                     if crypto_level == "initial":
-                        bisect.insort(
-                            self._initial_crypto_recv, (frame.offset, frame.data)
-                        )
+                        bisect.insort(self._initial_crypto_recv, (frame.offset, frame.data))
                     else:
-                        bisect.insort(
-                            self._handshake_crypto_recv, (frame.offset, frame.data)
-                        )
+                        bisect.insort(self._handshake_crypto_recv, (frame.offset, frame.data))
                 elif first == 0x18:
                     frame = pull_new_connection_id(buf)
                     # Store the new CID for potential use

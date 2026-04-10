@@ -197,9 +197,7 @@ def test_close_with_error_code() -> None:
     assert close_events[0].reason == "protocol violation"
 
 
-def _transfer_timed(
-    sender: QuicConnection, receiver: QuicConnection, now: float
-) -> list:
+def _transfer_timed(sender: QuicConnection, receiver: QuicConnection, now: float) -> list:
     """Shuttle datagrams with timestamps."""
     events = []
     for dg in sender.send_datagrams(now=now):
@@ -207,9 +205,7 @@ def _transfer_timed(
     return events
 
 
-def _handshake_timed(
-    client: QuicConnection, server: QuicConnection, now: float = 1.0
-) -> None:
+def _handshake_timed(client: QuicConnection, server: QuicConnection, now: float = 1.0) -> None:
     """Complete handshake with proper timestamps for timer tests."""
     client.connect()
     _transfer_timed(client, server, now)

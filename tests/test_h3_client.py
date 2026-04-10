@@ -119,9 +119,7 @@ def test_h3_post_request_with_body() -> None:
         ],
         end_stream=False,
     )
-    h3_client.send_data(
-        stream_id=stream_id, data=b'{"key": "value"}', end_stream=True
-    )
+    h3_client.send_data(stream_id=stream_id, data=b'{"key": "value"}', end_stream=True)
 
     server_quic_events = _transfer(client_quic, server_quic)
     h3_events = _collect_h3_events(server_quic_events, h3_server)
