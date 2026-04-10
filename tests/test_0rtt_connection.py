@@ -1,10 +1,7 @@
 """Server-side 0-RTT packet processing at the connection layer — Sprint 3."""
 
-import pytest
-
 from tests.utils import load
 from zoomies import QuicConfiguration, QuicConnection
-from zoomies.core.configuration import ZeroRttPolicy
 from zoomies.crypto import CryptoPair
 from zoomies.crypto.tls import (
     QuicClientTlsContext,
@@ -14,7 +11,6 @@ from zoomies.crypto.tls import (
 from zoomies.encoding import Buffer
 from zoomies.events import (
     DecryptionFailed,
-    HandshakeComplete,
     StreamDataReceived,
 )
 from zoomies.frames.stream import StreamFrame, push_stream_frame
@@ -104,7 +100,7 @@ def _psk_handshake_and_0rtt_keys(
 def test_server_tls_exposes_client_hello_hash() -> None:
     """TLS result includes client_hello_hash when processing ClientHello."""
     server_ticket, client_ticket = _tls_handshake_with_ticket()
-    early_secret, ch_hash = _psk_handshake_and_0rtt_keys(server_ticket, client_ticket)
+    _early_secret, ch_hash = _psk_handshake_and_0rtt_keys(server_ticket, client_ticket)
     assert len(ch_hash) == 32
     assert ch_hash != bytes(32)
 
@@ -230,8 +226,6 @@ def _build_0rtt_packet(
 
 def test_server_decrypts_0rtt_packet() -> None:
     """Server with 0-RTT crypto can decrypt a 0-RTT packet and deliver stream data."""
-    from cryptography.hazmat.primitives import hashes
-
     server_ticket, client_ticket = _tls_handshake_with_ticket()
 
     # Do PSK handshake at TLS level to get early_secret + CH hash
@@ -376,7 +370,7 @@ def test_0rtt_multiple_packets_increment_pn() -> None:
 
 def test_session_ticket_wired_to_client_connect() -> None:
     """QuicConfiguration.session_ticket is passed to the client TLS context."""
-    server_ticket, client_ticket = _tls_handshake_with_ticket()
+    _server_ticket, client_ticket = _tls_handshake_with_ticket()
 
     client_config = QuicConfiguration(
         is_client=True, verify_mode=False, session_ticket=client_ticket

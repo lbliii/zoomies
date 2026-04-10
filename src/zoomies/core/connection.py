@@ -12,7 +12,7 @@ from cryptography.exceptions import InvalidTag
 from zoomies.core.configuration import QuicConfiguration
 from zoomies.core.stream import Stream
 from zoomies.crypto import CryptoPair, QuicClientTlsContext, QuicTlsContext
-from zoomies.crypto.tls import ClientTlsState
+from zoomies.crypto.tls import ClientTlsState, SessionTicket
 from zoomies.encoding import Buffer
 from zoomies.events import (
     ConnectionClosed,
@@ -204,7 +204,7 @@ class QuicConnection:
             self._streams[sid] = stream
         return self._streams[sid]
 
-    def add_session_ticket(self, ticket: object) -> None:
+    def add_session_ticket(self, ticket: SessionTicket) -> None:
         """Register a session ticket for PSK validation on future connections (server)."""
         self._session_tickets.append(ticket)
         if self._tls_ctx is not None:

@@ -1,5 +1,6 @@
 """0-RTT key derivation and encrypt/decrypt — Sprint 2 of 0-RTT plan."""
 
+import pytest
 from cryptography.hazmat.primitives import hashes
 
 from tests.utils import load
@@ -232,7 +233,3 @@ def test_0rtt_wrong_key_fails_decrypt() -> None:
         wrong_pair.decrypt_packet(
             encrypted, encrypted_offset=len(header), expected_packet_number=0
         )
-
-
-# Need pytest for the raises test
-import pytest

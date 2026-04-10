@@ -81,7 +81,7 @@ def test_new_session_ticket_no_early_data() -> None:
     _push_block(inner, 2, b"")  # empty extensions
     _push_block(buf, 3, inner.data)
 
-    lifetime, age_add, nonce, ticket, max_early_data = _parse_new_session_ticket(buf.data)
+    lifetime, _age_add, _nonce, ticket, max_early_data = _parse_new_session_ticket(buf.data)
     assert lifetime == 3600
     assert ticket == b"ticket"
     assert max_early_data == 0
@@ -102,7 +102,7 @@ def test_server_generates_session_ticket() -> None:
     assert len(ticket.resumption_secret) == 32
 
     # Message should be parseable
-    lifetime, age_add, nonce, ticket_data, max_early_data = _parse_new_session_ticket(nst_msg)
+    lifetime, _age_add, _nonce, ticket_data, max_early_data = _parse_new_session_ticket(nst_msg)
     assert lifetime == 7200
     assert ticket_data == ticket.ticket
     assert max_early_data == 0xFFFFFFFF
@@ -228,7 +228,7 @@ def test_psk_handshake_wrong_ticket_falls_back_to_full() -> None:
     """If PSK binder is wrong, server falls back to full handshake."""
     # Get a ticket from one server
     server_ctx, client_ctx = _full_handshake()
-    nst_msg, server_ticket = server_ctx.generate_session_ticket()
+    nst_msg, _server_ticket = server_ctx.generate_session_ticket()
     client_ticket = client_ctx.receive_new_session_ticket(nst_msg)
 
     # New server that does NOT have this ticket registered

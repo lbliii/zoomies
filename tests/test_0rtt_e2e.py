@@ -9,7 +9,6 @@ from zoomies import QuicConfiguration, QuicConnection
 from zoomies.events import (
     H3DataReceived,
     H3HeadersReceived,
-    HandshakeComplete,
     StreamDataReceived,
     ZeroRttAccepted,
     ZeroRttRejected,

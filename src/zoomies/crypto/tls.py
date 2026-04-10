@@ -6,7 +6,6 @@ Supports X25519 key exchange and ECDSA P-256 certificate auth.
 
 import os
 import secrets
-import struct
 import time
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -79,7 +78,7 @@ class TlsHandshakeResult:
     data_to_send: bytes
     handshake_secret: bytes | None = None
     traffic_secret: bytes | None = None
-    session_ticket: "SessionTicket | None" = None
+    session_ticket: SessionTicket | None = None
     early_secret: bytes | None = None
     client_hello_hash: bytes | None = None
     is_psk: bool = False
@@ -1001,10 +1000,13 @@ class QuicClientTlsContext:
 
         # PSK mode: use real PSK if server selected our identity
         psk_input = bytes(32)
-        if sh_info.psk_identity is not None and self._session_ticket is not None:
-            if sh_info.psk_identity == 0:  # We only offer one identity
-                psk_input = self._session_ticket.derive_psk()
-                self._is_psk = True
+        if (
+            sh_info.psk_identity is not None
+            and self._session_ticket is not None
+            and sh_info.psk_identity == 0
+        ):
+            psk_input = self._session_ticket.derive_psk()
+            self._is_psk = True
 
         early_secret = _hkdf_extract(bytes(32), psk_input)
         self._early_secret = early_secret

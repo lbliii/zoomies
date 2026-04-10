@@ -1,23 +1,19 @@
 """Client-side 0-RTT send + rejection recovery — Sprint 4."""
 
-import pytest
-
 from tests.utils import load
 from zoomies import QuicConfiguration, QuicConnection
-from zoomies.core.configuration import ZeroRttPolicy
 from zoomies.crypto.tls import (
     QuicClientTlsContext,
     QuicTlsContext,
     SessionTicket,
 )
+from zoomies.encoding import Buffer
 from zoomies.events import (
-    HandshakeComplete,
     StreamDataReceived,
     ZeroRttAccepted,
     ZeroRttRejected,
 )
 from zoomies.packet.header import PACKET_TYPE_ZERO_RTT, pull_quic_header
-from zoomies.encoding import Buffer
 
 CERT = load("fixtures/ssl_cert.pem")
 KEY = load("fixtures/ssl_key.pem")
@@ -77,7 +73,7 @@ def _tls_handshake_with_ticket() -> tuple[SessionTicket, SessionTicket]:
 
 def test_client_sets_up_0rtt_crypto_with_ticket() -> None:
     """Client with session ticket sets up 0-RTT crypto after connect()."""
-    server_ticket, client_ticket = _tls_handshake_with_ticket()
+    _server_ticket, client_ticket = _tls_handshake_with_ticket()
     client_config = QuicConfiguration(
         is_client=True, verify_mode=False, session_ticket=client_ticket
     )
@@ -99,7 +95,7 @@ def test_client_no_0rtt_without_ticket() -> None:
 
 def test_client_sends_0rtt_packets() -> None:
     """Client with 0-RTT crypto produces 0-RTT packets from send_stream_data."""
-    server_ticket, client_ticket = _tls_handshake_with_ticket()
+    _server_ticket, client_ticket = _tls_handshake_with_ticket()
     client_config = QuicConfiguration(
         is_client=True, verify_mode=False, session_ticket=client_ticket
     )
@@ -130,7 +126,7 @@ def test_client_sends_0rtt_packets() -> None:
 
 def test_0rtt_data_routes_to_zero_rtt_queue() -> None:
     """send_stream_data routes to 0-RTT queue when crypto available pre-handshake."""
-    server_ticket, client_ticket = _tls_handshake_with_ticket()
+    _server_ticket, client_ticket = _tls_handshake_with_ticket()
     client_config = QuicConfiguration(
         is_client=True, verify_mode=False, session_ticket=client_ticket
     )
@@ -309,7 +305,7 @@ def test_0rtt_rejection_resends_as_1rtt() -> None:
     server_events = _transfer(client, server)
 
     # Server → Client (ACKs — may also deliver HANDSHAKE_DONE)
-    client_events2 = _transfer(server, client)
+    _transfer(server, client)
 
     # Another round if needed — client may need to receive HANDSHAKE_DONE first
     server_events2 = _transfer(client, server)
