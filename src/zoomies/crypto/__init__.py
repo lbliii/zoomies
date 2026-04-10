@@ -8,6 +8,7 @@ from zoomies.crypto.tls import (
     ClientTlsState,
     QuicClientTlsContext,
     QuicTlsContext,
+    SessionTicket,
     TlsHandshakeResult,
     TlsHandshakeState,
 )
@@ -17,6 +18,7 @@ __all__ = [
     "CryptoPair",
     "QuicClientTlsContext",
     "QuicTlsContext",
+    "SessionTicket",
     "TlsHandshakeResult",
     "TlsHandshakeState",
     "derive_key_iv_hp",

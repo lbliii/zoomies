@@ -181,6 +181,31 @@ class CryptoPair:
         self._recv.setup(secret=recv_secret, version=version)
         self._send.setup(secret=send_secret, version=version)
 
+    def setup_0rtt(
+        self,
+        early_secret: bytes,
+        client_hello_hash: bytes,
+        is_client: bool,
+        version: int = QUIC_VERSION_1,
+    ) -> None:
+        """Set up 0-RTT keys from early_secret and ClientHello transcript hash.
+
+        0-RTT is unidirectional: client sends, server receives.
+        Derives client_early_traffic_secret per RFC 8446 §7.1,
+        then QUIC AEAD keys per RFC 9001 §5.
+        """
+        client_early_traffic_secret = hkdf_expand_label(
+            hashes.SHA256,
+            early_secret,
+            b"c e traffic",
+            client_hello_hash,
+            hashes.SHA256.digest_size,
+        )
+        if is_client:
+            self._send.setup(secret=client_early_traffic_secret, version=version)
+        else:
+            self._recv.setup(secret=client_early_traffic_secret, version=version)
+
     def setup_1rtt(
         self,
         traffic_secret: bytes,

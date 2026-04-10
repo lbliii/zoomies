@@ -6,6 +6,7 @@ from zoomies.packet.header import (
     PACKET_LONG_HEADER,
     PACKET_TYPE_HANDSHAKE,
     PACKET_TYPE_INITIAL,
+    PACKET_TYPE_ZERO_RTT,
     QUIC_VERSION_1,
 )
 
@@ -67,6 +68,23 @@ def push_handshake_packet_header(
     push_quic_header(
         buf,
         PACKET_TYPE_HANDSHAKE,
+        QUIC_VERSION_1,
+        destination_cid,
+        source_cid,
+        payload_length=payload_length,
+    )
+
+
+def push_zero_rtt_packet_header(
+    buf: Buffer,
+    destination_cid: bytes,
+    source_cid: bytes,
+    payload_length: int,
+) -> None:
+    """Convenience: push 0-RTT packet long header."""
+    push_quic_header(
+        buf,
+        PACKET_TYPE_ZERO_RTT,
         QUIC_VERSION_1,
         destination_cid,
         source_cid,
