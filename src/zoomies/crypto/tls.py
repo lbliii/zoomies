@@ -6,7 +6,9 @@ Supports X25519 key exchange and ECDSA P-256 certificate auth.
 
 import os
 import secrets
-from dataclasses import dataclass
+import struct
+import time
+from dataclasses import dataclass, field
 from enum import StrEnum
 
 from cryptography import x509
@@ -36,10 +38,15 @@ HANDSHAKE_ENCRYPTED_EXTENSIONS = 8
 HANDSHAKE_CERTIFICATE = 11
 HANDSHAKE_CERTIFICATE_VERIFY = 15
 HANDSHAKE_FINISHED = 20
+HANDSHAKE_NEW_SESSION_TICKET = 4
 SERVER_CONTEXT_STRING = b"TLS 1.3, server CertificateVerify"
 CLIENT_CONTEXT_STRING = b"TLS 1.3, client CertificateVerify"
 EXT_SERVER_NAME = 0
+EXT_PRE_SHARED_KEY = 41
+EXT_EARLY_DATA = 42
+EXT_PSK_KEY_EXCHANGE_MODES = 45
 QUIC_TP_EXT_TYPE = 0x0039  # RFC 9001 §8.2: QUIC transport parameters
+PSK_DHE_KE = 1  # RFC 8446 §4.2.9: PSK with (EC)DHE key exchange
 
 
 class TlsHandshakeState(StrEnum):
@@ -72,6 +79,33 @@ class TlsHandshakeResult:
     data_to_send: bytes
     handshake_secret: bytes | None = None
     traffic_secret: bytes | None = None
+    session_ticket: "SessionTicket | None" = None
+    early_secret: bytes | None = None
+    client_hello_hash: bytes | None = None
+    is_psk: bool = False
+    early_data_accepted: bool = False
+
+
+@dataclass(frozen=True, slots=True)
+class SessionTicket:
+    """Opaque session ticket for TLS 1.3 resumption and 0-RTT.
+
+    Issued by server after handshake via NewSessionTicket message.
+    Client stores and presents on reconnection.
+    """
+
+    ticket: bytes
+    resumption_secret: bytes
+    max_early_data: int = 0xFFFFFFFF
+    cipher_suite: int = CIPHER_SUITE_AES_128_GCM
+    timestamp: float = 0.0
+    lifetime: int = 7200
+    age_add: int = 0
+    nonce: bytes = b""
+
+    def derive_psk(self) -> bytes:
+        """Derive PSK from resumption secret and nonce (RFC 8446 §4.6.1)."""
+        return _hkdf_expand_label(self.resumption_secret, b"resumption", self.nonce, 32)
 
 
 def _hkdf_expand_label(secret: bytes, label: bytes, context: bytes, length: int) -> bytes:
@@ -96,8 +130,24 @@ def _push_block(buf: Buffer, capacity: int, payload: bytes) -> None:
     buf.push_bytes(payload)
 
 
+@dataclass(frozen=True, slots=True)
+class _ClientHelloInfo:
+    """Parsed ClientHello fields."""
+
+    random: bytes
+    session_id: bytes
+    key_share: list[tuple[int, bytes]]
+    extensions: dict[int, bytes] = field(default_factory=dict)
+
+
 def _parse_client_hello(data: bytes) -> tuple[bytes, bytes, list[tuple[int, bytes]]]:
     """Parse ClientHello; return (random, legacy_session_id, key_share_entries)."""
+    info = _parse_client_hello_full(data)
+    return info.random, info.session_id, info.key_share
+
+
+def _parse_client_hello_full(data: bytes) -> _ClientHelloInfo:
+    """Parse ClientHello with all extensions."""
     buf = Buffer(data=data)
     if buf.pull_uint8() != HANDSHAKE_CLIENT_HELLO:
         raise ValueError("Expected ClientHello")
@@ -126,13 +176,24 @@ def _parse_client_hello(data: bytes) -> tuple[bytes, bytes, list[tuple[int, byte
             key_len = int.from_bytes(ks_buf.pull_bytes(2), "big")
             key_data = ks_buf.pull_bytes(key_len)
             key_share.append((group, key_data))
-    return random, session_id, key_share
+    return _ClientHelloInfo(
+        random=random,
+        session_id=session_id,
+        key_share=key_share,
+        extensions=extensions,
+    )
 
 
 def _build_server_hello(
-    random: bytes, legacy_session_id: bytes, key_share: tuple[int, bytes]
+    random: bytes,
+    legacy_session_id: bytes,
+    key_share: tuple[int, bytes],
+    psk_identity: int | None = None,
 ) -> bytes:
-    """Build ServerHello message."""
+    """Build ServerHello message.
+
+    If psk_identity is set, includes pre_shared_key extension selecting that identity.
+    """
     buf = Buffer()
     buf.push_uint8(HANDSHAKE_SERVER_HELLO)
     inner = Buffer()
@@ -152,16 +213,26 @@ def _build_server_hello(
     key_payload.push_bytes(key_share[1])
     ext_buf.push_uint16(len(key_payload.data))
     ext_buf.push_bytes(key_payload.data)
+    if psk_identity is not None:
+        ext_buf.push_uint16(EXT_PRE_SHARED_KEY)
+        ext_buf.push_uint16(2)
+        ext_buf.push_uint16(psk_identity)
     _push_block(inner, 2, ext_buf.data)
     _push_block(buf, 3, inner.data)
     return buf.data
 
 
-def _build_encrypted_extensions() -> bytes:
-    """Build minimal EncryptedExtensions."""
+def _build_encrypted_extensions(*, early_data: bool = False) -> bytes:
+    """Build EncryptedExtensions, optionally including early_data acceptance."""
     buf = Buffer()
     buf.push_uint8(HANDSHAKE_ENCRYPTED_EXTENSIONS)
-    _push_block(buf, 3, b"")
+    if early_data:
+        ext_buf = Buffer()
+        ext_buf.push_uint16(EXT_EARLY_DATA)
+        ext_buf.push_uint16(0)  # empty extension value = accepted
+        _push_block(buf, 3, ext_buf.data)
+    else:
+        _push_block(buf, 3, b"")
     return buf.data
 
 
@@ -198,6 +269,55 @@ def _build_finished(verify_data: bytes) -> bytes:
     return buf.data
 
 
+def _build_new_session_ticket(
+    lifetime: int,
+    age_add: int,
+    nonce: bytes,
+    ticket: bytes,
+    max_early_data: int = 0xFFFFFFFF,
+) -> bytes:
+    """Build NewSessionTicket message (RFC 8446 §4.6.1)."""
+    buf = Buffer()
+    buf.push_uint8(HANDSHAKE_NEW_SESSION_TICKET)
+    inner = Buffer()
+    inner.push_uint32(lifetime)
+    inner.push_uint32(age_add)
+    _push_block(inner, 1, nonce)
+    _push_block(inner, 2, ticket)
+    # Extensions — early_data extension with max_early_data_size
+    ext_buf = Buffer()
+    ext_buf.push_uint16(EXT_EARLY_DATA)
+    ext_buf.push_uint16(4)
+    ext_buf.push_uint32(max_early_data)
+    _push_block(inner, 2, ext_buf.data)
+    _push_block(buf, 3, inner.data)
+    return buf.data
+
+
+def _parse_new_session_ticket(data: bytes) -> tuple[int, int, bytes, bytes, int]:
+    """Parse NewSessionTicket; return (lifetime, age_add, nonce, ticket, max_early_data)."""
+    buf = Buffer(data=data)
+    if buf.pull_uint8() != HANDSHAKE_NEW_SESSION_TICKET:
+        raise ValueError("Expected NewSessionTicket")
+    payload = _pull_block(buf, 3)
+    inner = Buffer(data=payload)
+    lifetime = inner.pull_uint32()
+    age_add = inner.pull_uint32()
+    nonce = _pull_block(inner, 1)
+    ticket = _pull_block(inner, 2)
+    max_early_data = 0
+    if not inner.eof():
+        ext_data = _pull_block(inner, 2)
+        ext_buf = Buffer(data=ext_data)
+        while not ext_buf.eof():
+            ext_type = ext_buf.pull_uint16()
+            ext_len = ext_buf.pull_uint16()
+            ext_val = ext_buf.pull_bytes(ext_len)
+            if ext_type == EXT_EARLY_DATA and ext_len >= 4:
+                max_early_data = int.from_bytes(ext_val[:4], "big")
+    return lifetime, age_add, nonce, ticket, max_early_data
+
+
 class QuicTlsContext:
     """TLS 1.3 context for QUIC server handshake."""
 
@@ -212,10 +332,24 @@ class QuicTlsContext:
         self._client_random = b""
         self._server_random = b""
         self._legacy_session_id = b""
+        self._master_secret: bytes | None = None
+        self._resumption_secret: bytes | None = None
+        self._is_psk: bool = False
+        self._early_secret: bytes | None = None
+        self._client_hello_hash: bytes | None = None
+        # PSK state for session ticket validation
+        self._session_tickets: list[SessionTicket] = []
+        self._ticket_nonce_counter: int = 0
+        # Set by connection layer to include early_data in EncryptedExtensions
+        self.accept_early_data: bool = False
 
     @property
     def state(self) -> TlsHandshakeState:
         return self._state
+
+    def add_session_ticket(self, ticket: SessionTicket) -> None:
+        """Register a session ticket for PSK validation on future connections."""
+        self._session_tickets.append(ticket)
 
     def receive(self, data: bytes) -> TlsHandshakeResult:
         """Process incoming TLS handshake data."""
@@ -257,10 +391,13 @@ class QuicTlsContext:
                         data_to_send=to_send,
                         handshake_secret=self._handshake_secret,
                         traffic_secret=self._traffic_secret,
+                        is_psk=self._is_psk,
+                        early_secret=self._early_secret,
+                        client_hello_hash=self._client_hello_hash,
                     )
                 else:
                     break
-            except ValueError, BufferReadError:
+            except (ValueError, BufferReadError):
                 if self._state == TlsHandshakeState.START:
                     self._state = TlsHandshakeState.CLIENT_HELLO_RECEIVED
                 else:
@@ -273,17 +410,32 @@ class QuicTlsContext:
             data_to_send=to_send,
             handshake_secret=self._handshake_secret,
             traffic_secret=self._traffic_secret,
+            is_psk=self._is_psk,
+            early_secret=self._early_secret,
+            client_hello_hash=self._client_hello_hash,
         )
 
     def _handle_client_hello(self, msg: bytes) -> bytes:
-        """Process ClientHello, return server response."""
-        self._handshake_hash.update(msg)
-        random, session_id, key_share_list = _parse_client_hello(msg)
-        self._client_random = random
-        self._legacy_session_id = session_id
+        """Process ClientHello, return server response.
 
+        Supports both full handshake and PSK resumption (RFC 8446 §4.2.11).
+        """
+        self._handshake_hash.update(msg)
+        # Capture transcript hash after just CH — needed for 0-RTT key derivation
+        self._client_hello_hash = self._handshake_hash.copy().finalize()
+        ch_info = _parse_client_hello_full(msg)
+        self._client_random = ch_info.random
+        self._legacy_session_id = ch_info.session_id
+
+        # Check for PSK resumption
+        psk: bytes | None = None
+        psk_identity_index: int | None = None
+        if EXT_PRE_SHARED_KEY in ch_info.extensions and self._session_tickets:
+            psk, psk_identity_index = self._try_validate_psk(msg, ch_info)
+
+        # Key exchange (always required — psk_dhe_ke mode)
         peer_public = None
-        for group, key_data in key_share_list:
+        for group, key_data in ch_info.key_share:
             if group == GROUP_X25519:
                 peer_public = x25519.X25519PublicKey.from_public_bytes(key_data)
                 break
@@ -309,29 +461,42 @@ class QuicTlsContext:
             key_share = (GROUP_SECP256R1, server_pub)
 
         self._server_random = os.urandom(32)
-        server_hello = _build_server_hello(self._server_random, session_id, key_share)
+        server_hello = _build_server_hello(
+            self._server_random, ch_info.session_id, key_share,
+            psk_identity=psk_identity_index,
+        )
         self._handshake_hash.update(server_hello)
 
-        early_secret = _hkdf_extract(bytes(32), bytes(32))
+        # Key schedule — use real PSK if available, else zero
+        psk_input = psk if psk is not None else bytes(32)
+        early_secret = _hkdf_extract(bytes(32), psk_input)
+        self._early_secret = early_secret
+        self._is_psk = psk is not None
         derived = _hkdf_expand_label(early_secret, b"derived", b"", 32)
         self._handshake_secret = _hkdf_extract(derived, shared)
 
-        ee = _build_encrypted_extensions()
+        include_early_data = psk is not None and self.accept_early_data
+        ee = _build_encrypted_extensions(early_data=include_early_data)
         self._handshake_hash.update(ee)
 
-        cert_der = self._cert.public_bytes(Encoding.DER)
-        cert_msg = _build_certificate(cert_der)
-        self._handshake_hash.update(cert_msg)
-
-        transcript_hash = self._handshake_hash.copy().finalize()
-        verify_data = b" " * 64 + SERVER_CONTEXT_STRING + b"\x00" + transcript_hash
-        if isinstance(self._key, ec.EllipticCurvePrivateKey):
-            signature = self._key.sign(verify_data, ec.ECDSA(hashes.SHA256()))
-            sig_alg = SIG_ECDSA_SECP256R1_SHA256
+        if psk is not None:
+            # PSK mode: skip Certificate and CertificateVerify
+            transcript_hash = self._handshake_hash.copy().finalize()
         else:
-            raise ValueError("Unsupported private key type")
-        cert_verify = _build_certificate_verify(sig_alg, signature)
-        self._handshake_hash.update(cert_verify)
+            # Full handshake: send Certificate + CertificateVerify
+            cert_der = self._cert.public_bytes(Encoding.DER)
+            cert_msg = _build_certificate(cert_der)
+            self._handshake_hash.update(cert_msg)
+
+            transcript_hash = self._handshake_hash.copy().finalize()
+            verify_data = b" " * 64 + SERVER_CONTEXT_STRING + b"\x00" + transcript_hash
+            if isinstance(self._key, ec.EllipticCurvePrivateKey):
+                signature = self._key.sign(verify_data, ec.ECDSA(hashes.SHA256()))
+                sig_alg = SIG_ECDSA_SECP256R1_SHA256
+            else:
+                raise ValueError("Unsupported private key type")
+            cert_verify = _build_certificate_verify(sig_alg, signature)
+            self._handshake_hash.update(cert_verify)
 
         s_hs_traffic = _hkdf_expand_label(
             self._handshake_secret, b"s hs traffic", transcript_hash, 32
@@ -344,15 +509,69 @@ class QuicTlsContext:
         self._handshake_hash.update(finished)
 
         derived2 = _hkdf_expand_label(self._handshake_secret, b"derived", transcript_hash, 32)
-        master_secret = _hkdf_extract(derived2, bytes(32))
+        self._master_secret = _hkdf_extract(derived2, bytes(32))
         self._traffic_secret = _hkdf_expand_label(
-            master_secret, b"s ap traffic", transcript_hash, 32
+            self._master_secret, b"s ap traffic", transcript_hash, 32
         )
 
+        if psk is not None:
+            return server_hello + ee + finished
         return server_hello + ee + cert_msg + cert_verify + finished
 
+    def _try_validate_psk(
+        self, msg: bytes, ch_info: _ClientHelloInfo
+    ) -> tuple[bytes | None, int | None]:
+        """Try to validate PSK from ClientHello. Returns (psk, identity_index) or (None, None)."""
+        psk_ext = ch_info.extensions[EXT_PRE_SHARED_KEY]
+        psk_buf = Buffer(data=psk_ext)
+
+        # Parse identities
+        identities_data = _pull_block(psk_buf, 2)
+        id_buf = Buffer(data=identities_data)
+        identities: list[tuple[bytes, int]] = []
+        while not id_buf.eof():
+            identity = _pull_block(id_buf, 2)
+            obfuscated_age = id_buf.pull_uint32()
+            identities.append((identity, obfuscated_age))
+
+        # Parse binders
+        binders_data = _pull_block(psk_buf, 2)
+        binder_buf = Buffer(data=binders_data)
+        binders: list[bytes] = []
+        while not binder_buf.eof():
+            binder = _pull_block(binder_buf, 1)
+            binders.append(binder)
+
+        if len(identities) != len(binders):
+            return None, None
+
+        # Try each identity against our known tickets
+        for idx, (identity, _obfuscated_age) in enumerate(identities):
+            for ticket in self._session_tickets:
+                if identity == ticket.ticket:
+                    # Validate binder
+                    psk = ticket.derive_psk()
+                    early_secret = _hkdf_extract(bytes(32), psk)
+                    binder_key = _hkdf_expand_label(early_secret, b"res binder", b"", 32)
+
+                    # Binder is HMAC over truncated ClientHello (up to binders)
+                    # The binders_data starts after the 2-byte binders length prefix
+                    # We need to find the offset in msg where binders start
+                    binders_len = 2 + len(binders_data)  # 2-byte length + data
+                    truncated_ch = msg[: len(msg) - binders_len]
+                    truncated_hash = hashes.Hash(hashes.SHA256())
+                    truncated_hash.update(truncated_ch)
+                    h = hmac.HMAC(binder_key, hashes.SHA256())
+                    h.update(truncated_hash.finalize())
+                    expected_binder = h.finalize()
+
+                    if secrets.compare_digest(binders[idx], expected_binder):
+                        return psk, idx
+
+        return None, None
+
     def _handle_finished(self, msg: bytes) -> None:
-        """Verify client Finished."""
+        """Verify client Finished and derive resumption_master_secret."""
         if self._handshake_secret is None:
             raise ValueError("Handshake secret not set")
         buf = Buffer(data=msg)
@@ -372,6 +591,47 @@ class QuicTlsContext:
             raise ValueError("Finished verify failed")
         self._handshake_hash.update(msg)
 
+        # Derive resumption_master_secret (RFC 8446 §7.1)
+        if self._master_secret is not None:
+            transcript_hash = self._handshake_hash.copy().finalize()
+            self._resumption_secret = _hkdf_expand_label(
+                self._master_secret, b"res master", transcript_hash, 32
+            )
+
+    def generate_session_ticket(self, lifetime: int = 7200) -> tuple[bytes, SessionTicket]:
+        """Generate a NewSessionTicket message and corresponding SessionTicket.
+
+        Returns (nst_message_bytes, session_ticket).
+        Call after handshake is complete.
+        """
+        if self._resumption_secret is None:
+            raise RuntimeError("Handshake not complete — no resumption secret")
+
+        nonce = self._ticket_nonce_counter.to_bytes(4, "big")
+        self._ticket_nonce_counter += 1
+        age_add = int.from_bytes(os.urandom(4), "big")
+
+        # Ticket is opaque — for now just use a random identifier.
+        # In production, the server would encrypt state into this.
+        ticket_data = os.urandom(32)
+
+        nst_msg = _build_new_session_ticket(
+            lifetime=lifetime,
+            age_add=age_add,
+            nonce=nonce,
+            ticket=ticket_data,
+        )
+
+        ticket = SessionTicket(
+            ticket=ticket_data,
+            resumption_secret=self._resumption_secret,
+            lifetime=lifetime,
+            age_add=age_add,
+            nonce=nonce,
+            timestamp=time.monotonic(),
+        )
+        return nst_msg, ticket
+
 
 # ---------------------------------------------------------------------------
 # Client-side TLS helpers
@@ -383,8 +643,13 @@ def _build_client_hello(
     session_id: bytes,
     key_share: tuple[int, bytes],
     server_name: str | None = None,
+    session_ticket: SessionTicket | None = None,
 ) -> bytes:
-    """Build ClientHello message."""
+    """Build ClientHello message.
+
+    If session_ticket is provided, includes pre_shared_key and psk_key_exchange_modes
+    extensions for PSK resumption. The PSK binder is computed and inserted.
+    """
     buf = Buffer()
     buf.push_uint8(HANDSHAKE_CLIENT_HELLO)
     inner = Buffer()
@@ -444,13 +709,88 @@ def _build_client_hello(
         sni_inner.push_bytes(sni_list.data)
         ext_buf.push_uint16(len(sni_inner.data))
         ext_buf.push_bytes(sni_inner.data)
+    # PSK extensions (must be last — RFC 8446 §4.2.11)
+    if session_ticket is not None:
+        # psk_key_exchange_modes
+        ext_buf.push_uint16(EXT_PSK_KEY_EXCHANGE_MODES)
+        psk_modes = Buffer()
+        psk_modes.push_uint8(1)  # length of modes list
+        psk_modes.push_uint8(PSK_DHE_KE)
+        ext_buf.push_uint16(len(psk_modes.data))
+        ext_buf.push_bytes(psk_modes.data)
+
+        # pre_shared_key (must be LAST extension)
+        psk = session_ticket.derive_psk()
+        obfuscated_age = (
+            int((time.monotonic() - session_ticket.timestamp) * 1000) + session_ticket.age_add
+        ) & 0xFFFFFFFF
+
+        # Build identities
+        id_buf = Buffer()
+        _push_block(id_buf, 2, session_ticket.ticket)
+        id_buf.push_uint32(obfuscated_age)
+        identities_data = id_buf.data
+
+        # Placeholder binder (32 bytes for SHA-256)
+        binder_placeholder = bytes(32)
+        binder_entry = Buffer()
+        _push_block(binder_entry, 1, binder_placeholder)
+        binders_data = binder_entry.data
+
+        # Build PSK extension with placeholder
+        psk_ext = Buffer()
+        _push_block(psk_ext, 2, identities_data)
+        _push_block(psk_ext, 2, binders_data)
+        ext_buf.push_uint16(EXT_PRE_SHARED_KEY)
+        ext_buf.push_uint16(len(psk_ext.data))
+        ext_buf.push_bytes(psk_ext.data)
+
     _push_block(inner, 2, ext_buf.data)
     _push_block(buf, 3, inner.data)
-    return buf.data
+    msg = buf.data
+
+    # Compute and insert real PSK binder
+    if session_ticket is not None:
+        psk = session_ticket.derive_psk()
+        early_secret = _hkdf_extract(bytes(32), psk)
+        binder_key = _hkdf_expand_label(early_secret, b"res binder", b"", 32)
+
+        # Truncated CH = everything up to the binder value
+        # binders_data = 1-byte length + 32-byte binder = 33 bytes
+        # binders block = 2-byte length prefix + 33 bytes = 35 bytes
+        binders_len = 2 + len(binders_data)
+        truncated_ch = msg[: len(msg) - binders_len]
+        truncated_hash = hashes.Hash(hashes.SHA256())
+        truncated_hash.update(truncated_ch)
+        h = hmac.HMAC(binder_key, hashes.SHA256())
+        h.update(truncated_hash.finalize())
+        real_binder = h.finalize()
+
+        # Replace placeholder binder in the message
+        # The binder is at: end - len(binder_placeholder) = end - 32
+        msg = msg[: len(msg) - 32] + real_binder
+
+    return msg
+
+
+@dataclass(frozen=True, slots=True)
+class _ServerHelloInfo:
+    """Parsed ServerHello fields."""
+
+    random: bytes
+    session_id: bytes
+    key_share: tuple[int, bytes]
+    psk_identity: int | None = None
 
 
 def _parse_server_hello(data: bytes) -> tuple[bytes, bytes, tuple[int, bytes]]:
     """Parse ServerHello; return (random, legacy_session_id, key_share_entry)."""
+    info = _parse_server_hello_full(data)
+    return info.random, info.session_id, info.key_share
+
+
+def _parse_server_hello_full(data: bytes) -> _ServerHelloInfo:
+    """Parse ServerHello with all extensions."""
     buf = Buffer(data=data)
     if buf.pull_uint8() != HANDSHAKE_SERVER_HELLO:
         raise ValueError("Expected ServerHello")
@@ -475,7 +815,16 @@ def _parse_server_hello(data: bytes) -> tuple[bytes, bytes, tuple[int, bytes]]:
     group = ks_buf.pull_uint16()
     key_len = int.from_bytes(ks_buf.pull_bytes(2), "big")
     key_data = ks_buf.pull_bytes(key_len)
-    return random, session_id, (group, key_data)
+    psk_identity = None
+    if EXT_PRE_SHARED_KEY in extensions:
+        psk_buf = Buffer(data=extensions[EXT_PRE_SHARED_KEY])
+        psk_identity = psk_buf.pull_uint16()
+    return _ServerHelloInfo(
+        random=random,
+        session_id=session_id,
+        key_share=(group, key_data),
+        psk_identity=psk_identity,
+    )
 
 
 def _parse_encrypted_extensions(data: bytes) -> dict[int, bytes]:
@@ -533,15 +882,23 @@ class QuicClientTlsContext:
         ca_certs: bytes | None = None,
         verify_mode: bool = True,
         server_name: str | None = None,
+        session_ticket: SessionTicket | None = None,
     ) -> None:
         self._ca_certs = ca_certs
         self._verify_mode = verify_mode
         self._server_name = server_name
+        self._session_ticket = session_ticket
         self._state = ClientTlsState.START
         self._receive_buffer = b""
         self._handshake_hash = hashes.Hash(hashes.SHA256())
         self._handshake_secret: bytes | None = None
         self._traffic_secret: bytes | None = None
+        self._master_secret: bytes | None = None
+        self._resumption_secret: bytes | None = None
+        self._early_secret: bytes | None = None
+        self._client_hello_hash: bytes | None = None
+        self._is_psk: bool = False
+        self._early_data_accepted: bool = False
         self._client_random = b""
         self._legacy_session_id = b""
         self._private_key: x25519.X25519PrivateKey | None = None
@@ -568,8 +925,11 @@ class QuicClientTlsContext:
             self._legacy_session_id,
             (GROUP_X25519, pub),
             server_name=self._server_name,
+            session_ticket=self._session_ticket,
         )
         self._handshake_hash.update(msg)
+        # Capture transcript hash after just CH — needed for 0-RTT key derivation
+        self._client_hello_hash = self._handshake_hash.copy().finalize()
         self._state = ClientTlsState.WAIT_SERVER_HELLO
         return msg
 
@@ -619,23 +979,35 @@ class QuicClientTlsContext:
             data_to_send=to_send,
             handshake_secret=self._handshake_secret,
             traffic_secret=self._traffic_secret,
+            is_psk=self._is_psk,
+            early_secret=self._early_secret,
+            client_hello_hash=self._client_hello_hash,
+            early_data_accepted=self._early_data_accepted,
         )
 
     def _handle_server_hello(self, msg: bytes) -> None:
         """Process ServerHello — derive handshake secret."""
         self._handshake_hash.update(msg)
-        _random, _session_id, key_share = _parse_server_hello(msg)
+        sh_info = _parse_server_hello_full(msg)
         if self._private_key is None:
             raise RuntimeError("Client key not initialized")
 
-        group, peer_pub_bytes = key_share
+        group, peer_pub_bytes = sh_info.key_share
         if group == GROUP_X25519:
             peer_public = x25519.X25519PublicKey.from_public_bytes(peer_pub_bytes)
             shared = self._private_key.exchange(peer_public)
         else:
             raise ValueError(f"Unsupported key share group: {group}")
 
-        early_secret = _hkdf_extract(bytes(32), bytes(32))
+        # PSK mode: use real PSK if server selected our identity
+        psk_input = bytes(32)
+        if sh_info.psk_identity is not None and self._session_ticket is not None:
+            if sh_info.psk_identity == 0:  # We only offer one identity
+                psk_input = self._session_ticket.derive_psk()
+                self._is_psk = True
+
+        early_secret = _hkdf_extract(bytes(32), psk_input)
+        self._early_secret = early_secret
         derived = _hkdf_expand_label(early_secret, b"derived", b"", 32)
         self._handshake_secret = _hkdf_extract(derived, shared)
         self._state = ClientTlsState.WAIT_ENCRYPTED_EXTENSIONS
@@ -643,8 +1015,14 @@ class QuicClientTlsContext:
     def _handle_encrypted_extensions(self, msg: bytes) -> None:
         """Process EncryptedExtensions."""
         self._handshake_hash.update(msg)
-        _extensions = _parse_encrypted_extensions(msg)
-        self._state = ClientTlsState.WAIT_CERTIFICATE
+        extensions = _parse_encrypted_extensions(msg)
+        self._early_data_accepted = EXT_EARLY_DATA in extensions
+        if self._is_psk:
+            # PSK mode: no Certificate or CertificateVerify — go straight to Finished
+            self._transcript_at_cert = self._handshake_hash.copy().finalize()
+            self._state = ClientTlsState.WAIT_FINISHED
+        else:
+            self._state = ClientTlsState.WAIT_CERTIFICATE
 
     def _handle_certificate(self, msg: bytes) -> None:
         """Process Certificate — store server cert for verification."""
@@ -732,9 +1110,9 @@ class QuicClientTlsContext:
 
         # Derive application traffic secret (matching server's derivation)
         derived2 = _hkdf_expand_label(self._handshake_secret, b"derived", transcript_hash, 32)
-        master_secret = _hkdf_extract(derived2, bytes(32))
+        self._master_secret = _hkdf_extract(derived2, bytes(32))
         self._traffic_secret = _hkdf_expand_label(
-            master_secret, b"s ap traffic", transcript_hash, 32
+            self._master_secret, b"s ap traffic", transcript_hash, 32
         )
 
         # Build client Finished
@@ -749,5 +1127,30 @@ class QuicClientTlsContext:
         client_finished = _build_finished(ch.finalize())
         self._handshake_hash.update(client_finished)
 
+        # Derive resumption_master_secret
+        res_transcript = self._handshake_hash.copy().finalize()
+        self._resumption_secret = _hkdf_expand_label(
+            self._master_secret, b"res master", res_transcript, 32
+        )
+
         self._state = ClientTlsState.HANDSHAKE_COMPLETE
         return client_finished
+
+    def receive_new_session_ticket(self, data: bytes) -> SessionTicket:
+        """Process a NewSessionTicket message from the server.
+
+        Call after handshake is complete, when the server sends a ticket
+        in the 1-RTT epoch.
+        """
+        if self._resumption_secret is None:
+            raise RuntimeError("Handshake not complete — no resumption secret")
+        lifetime, age_add, nonce, ticket_data, max_early_data = _parse_new_session_ticket(data)
+        return SessionTicket(
+            ticket=ticket_data,
+            resumption_secret=self._resumption_secret,
+            lifetime=lifetime,
+            age_add=age_add,
+            nonce=nonce,
+            max_early_data=max_early_data,
+            timestamp=time.monotonic(),
+        )

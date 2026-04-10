@@ -12,6 +12,7 @@ from cryptography.exceptions import InvalidTag
 from zoomies.core.configuration import QuicConfiguration
 from zoomies.core.stream import Stream
 from zoomies.crypto import CryptoPair, QuicClientTlsContext, QuicTlsContext
+from zoomies.crypto.tls import ClientTlsState
 from zoomies.encoding import Buffer
 from zoomies.events import (
     ConnectionClosed,
@@ -24,6 +25,8 @@ from zoomies.events import (
     StopSendingReceived,
     StreamDataReceived,
     StreamReset,
+    ZeroRttAccepted,
+    ZeroRttRejected,
 )
 from zoomies.frames.ack import AckFrame, RangeSet, pull_ack_frame, push_ack_frame
 from zoomies.frames.common import (
@@ -52,6 +55,7 @@ from zoomies.packet.builder import (
     push_handshake_packet_header,
     push_initial_packet_header,
     push_short_header,
+    push_zero_rtt_packet_header,
 )
 from zoomies.packet.header import (
     PACKET_TYPE_HANDSHAKE,
@@ -123,6 +127,7 @@ class QuicConnection:
         self._state = ConnectionState.INITIAL
         self._initial_crypto: CryptoPair | None = None
         self._handshake_crypto: CryptoPair | None = None
+        self._zero_rtt_crypto: CryptoPair | None = None
         self._one_rtt_crypto: CryptoPair | None = None
         self._tls_ctx: QuicTlsContext | None = None
         self._client_tls_ctx: QuicClientTlsContext | None = None
@@ -138,6 +143,8 @@ class QuicConnection:
         self._handshake_recv_pn = 0
         self._one_rtt_recv_pn = 0
         self._stream_send_queue: list[tuple[int, bytes, bool]] = []
+        self._zero_rtt_stream_queue: list[tuple[int, bytes, bool]] = []
+        self._zero_rtt_accepted: bool | None = None  # None=unknown, True/False after EE
         # Separate CRYPTO buffers per encryption level (RFC 9000 §19.6)
         self._initial_crypto_recv: list[tuple[int, bytes]] = []
         self._initial_crypto_fed = 0
@@ -170,6 +177,8 @@ class QuicConnection:
         self._bytes_sent = 0
         # Client is never subject to anti-amplification limits
         self._address_validated = config.is_client
+        # Session tickets for PSK resumption (server-side)
+        self._session_tickets: list = []
         # Retransmission queues for lost frames
         self._crypto_retransmit: list[tuple[int, bytes]] = []  # (offset, data)
         self._handshake_done_pending = False
@@ -195,6 +204,12 @@ class QuicConnection:
             self._streams[sid] = stream
         return self._streams[sid]
 
+    def add_session_ticket(self, ticket: object) -> None:
+        """Register a session ticket for PSK validation on future connections (server)."""
+        self._session_tickets.append(ticket)
+        if self._tls_ctx is not None:
+            self._tls_ctx.add_session_ticket(ticket)
+
     def connect(self) -> None:
         """Generate Initial packet with ClientHello. Client mode only. Call once."""
         if not self._is_client:
@@ -212,9 +227,22 @@ class QuicConnection:
             ca_certs=self._config.ca_certs,
             verify_mode=self._config.verify_mode,
             server_name=self._config.server_name,
+            session_ticket=self._config.session_ticket,
         )
         client_hello = self._client_tls_ctx.build_client_hello()
         self._queue_initial_client_hello(client_hello)
+        # Set up 0-RTT crypto if we have a session ticket for early data
+        if self._config.session_ticket is not None:
+            from cryptography.hazmat.primitives import hashes
+
+            psk = self._config.session_ticket.derive_psk()
+            from zoomies.crypto._hkdf import hkdf_extract
+
+            early_secret = hkdf_extract(hashes.SHA256, bytes(32), psk)
+            ch_hash = self._client_tls_ctx._client_hello_hash
+            if ch_hash is not None:
+                self._zero_rtt_crypto = CryptoPair()
+                self._zero_rtt_crypto.setup_0rtt(early_secret, ch_hash, is_client=True)
 
     def _queue_initial_client_hello(self, client_hello: bytes) -> None:
         """Queue Initial packet containing ClientHello CRYPTO frame."""
@@ -262,8 +290,20 @@ class QuicConnection:
         self._initial_pn += 1
 
     def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool = False) -> None:
-        """Queue stream data for sending (H3StreamSender protocol)."""
-        self._stream_send_queue.append((stream_id, data, end_stream))
+        """Queue stream data for sending (H3StreamSender protocol).
+
+        If 0-RTT crypto is available and handshake hasn't completed,
+        data is queued for 0-RTT transmission.
+        """
+        if (
+            self._is_client
+            and self._zero_rtt_crypto is not None
+            and self._state != ConnectionState.ONE_RTT
+            and self._zero_rtt_accepted is None
+        ):
+            self._zero_rtt_stream_queue.append((stream_id, data, end_stream))
+        else:
+            self._stream_send_queue.append((stream_id, data, end_stream))
 
     def datagram_received(
         self, data: bytes, addr: tuple[str, int], *, now: float = 0.0
@@ -295,7 +335,7 @@ class QuicConnection:
             elif header.packet_type == PACKET_TYPE_HANDSHAKE:
                 self._handle_handshake(data, buf, header, events)
             elif header.packet_type == PACKET_TYPE_ZERO_RTT:
-                pass  # 0-RTT not yet implemented
+                self._handle_0rtt(data, buf, header, events)
         elif isinstance(header, ShortHeader):
             self._handle_short(data, buf, header, events)
 
@@ -332,6 +372,10 @@ class QuicConnection:
                 certificate=self._config.certificate,
                 private_key=self._config.private_key,
             )
+            for ticket in self._session_tickets:
+                self._tls_ctx.add_session_ticket(ticket)
+            if self._config.zero_rtt_policy is not None:
+                self._tls_ctx.accept_early_data = self._check_zero_rtt_policy()
 
         if not self._initial_crypto:
             return
@@ -376,6 +420,25 @@ class QuicConnection:
             self._feed_crypto_to_tls(events, level="initial")
         except InvalidTag:
             events.append(DecryptionFailed(packet_type="initial"))
+
+    def _handle_0rtt(
+        self, data: bytes, buf: Buffer, header: LongHeader, events: list[QuicEvent]
+    ) -> None:
+        """Server: handle 0-RTT packet containing early data."""
+        if not self._zero_rtt_crypto:
+            return
+        encrypted_offset = buf.tell()
+        try:
+            _ph, plain_payload, pn = self._zero_rtt_crypto.decrypt_packet(
+                data, encrypted_offset, self._one_rtt_recv_pn
+            )
+            # 0-RTT shares Application packet number space (RFC 9002 §A.3)
+            self._one_rtt_recv_pn = pn + 1
+            self._application_ack_ranges.add(pn)
+            self._ack_needed_application = True
+            self._parse_payload_frames(plain_payload, events, is_0rtt=True)
+        except InvalidTag:
+            events.append(DecryptionFailed(packet_type="0rtt"))
 
     def _handle_handshake(
         self, data: bytes, buf: Buffer, header: LongHeader, events: list[QuicEvent]
@@ -460,6 +523,43 @@ class QuicConnection:
         else:
             self._feed_crypto_to_server_tls(to_feed, events)
 
+    def _handle_zero_rtt_rejected(self, events: list[QuicEvent]) -> None:
+        """Handle 0-RTT rejection: resend all 0-RTT stream data as 1-RTT."""
+        self._zero_rtt_accepted = False
+        events.append(ZeroRttRejected())
+        # Move any unsent 0-RTT data to the 1-RTT queue
+        if self._zero_rtt_stream_queue:
+            self._stream_send_queue.extend(self._zero_rtt_stream_queue)
+            self._zero_rtt_stream_queue = []
+        # Re-queue data that was already sent as 0-RTT for resend as 1-RTT
+        resend_streams: set[int] = set()
+        for pkt in list(self._application_space.sent_packets.values()):
+            for frame in pkt.frames:
+                if isinstance(frame, SentStreamFrame):
+                    stream = self._get_or_create_stream(StreamId(frame.stream_id))
+                    data = stream._send.get_data(frame.offset, frame.length)
+                    if data:
+                        self._stream_send_queue.append(
+                            (frame.stream_id, data, frame.fin)
+                        )
+                        resend_streams.add(frame.stream_id)
+        # Reset stream send state so 1-RTT resend starts from offset 0
+        for sid in resend_streams:
+            stream = self._get_or_create_stream(StreamId(sid))
+            stream._send.reset_for_0rtt_rejection()
+        # Reset Application PN space — 0-RTT PNs were never acknowledged
+        self._one_rtt_pn = 0
+        self._application_space = PacketSpace()
+        # Discard 0-RTT crypto — no longer needed
+        self._zero_rtt_crypto = None
+
+    def _check_zero_rtt_policy(self) -> bool:
+        """Check if 0-RTT is allowed by the configured policy. Default: reject."""
+        policy = self._config.zero_rtt_policy
+        if policy is None:
+            return False
+        return policy.allow_0rtt(ticket_data=b"", obfuscated_age=0)
+
     def _feed_crypto_to_server_tls(self, data: bytes, events: list[QuicEvent]) -> None:
         """Server: feed CRYPTO data to server TLS context."""
         if not self._tls_ctx:
@@ -468,6 +568,18 @@ class QuicConnection:
         if result.handshake_secret and not self._handshake_crypto:
             self._handshake_crypto = CryptoPair()
             self._handshake_crypto.setup_handshake(result.handshake_secret, is_client=False)
+        # Set up 0-RTT decryption if PSK accepted and policy allows
+        if (
+            result.is_psk
+            and result.early_secret is not None
+            and result.client_hello_hash is not None
+            and self._zero_rtt_crypto is None
+            and self._check_zero_rtt_policy()
+        ):
+            self._zero_rtt_crypto = CryptoPair()
+            self._zero_rtt_crypto.setup_0rtt(
+                result.early_secret, result.client_hello_hash, is_client=False
+            )
         if result.data_to_send:
             # Split TLS data: ServerHello goes in Initial CRYPTO, rest in Handshake CRYPTO
             # ServerHello is the first message (type 0x02)
@@ -498,6 +610,25 @@ class QuicConnection:
         if result.handshake_secret and not self._handshake_crypto:
             self._handshake_crypto = CryptoPair()
             self._handshake_crypto.setup_handshake(result.handshake_secret, is_client=True)
+        # Check 0-RTT acceptance/rejection after EE is processed
+        # Only check once the client TLS state has moved past WAIT_ENCRYPTED_EXTENSIONS
+        ee_processed = (
+            self._client_tls_ctx.state not in (
+                ClientTlsState.START,
+                ClientTlsState.WAIT_SERVER_HELLO,
+                ClientTlsState.WAIT_ENCRYPTED_EXTENSIONS,
+            )
+        )
+        if (
+            self._zero_rtt_crypto is not None
+            and self._zero_rtt_accepted is None
+            and ee_processed
+        ):
+            if result.early_data_accepted:
+                self._zero_rtt_accepted = True
+                events.append(ZeroRttAccepted())
+            else:
+                self._handle_zero_rtt_rejected(events)
         if result.data_to_send:
             # Client Finished — send in Handshake packet
             self._queue_handshake_response(result.data_to_send)
@@ -912,6 +1043,10 @@ class QuicConnection:
             push_ping_frame(payload_buf, PingFrame())
             out.append(self._encrypt_short_packet(payload_buf.data, (SentPingFrame(),)))
 
+        # Flush 0-RTT stream data (client only, before handshake completes)
+        if self._zero_rtt_crypto and self._zero_rtt_stream_queue and self._peer_cid:
+            out.extend(self._flush_zero_rtt_queue())
+
         if self._state == ConnectionState.ONE_RTT and self._stream_send_queue:
             out.extend(self._flush_stream_send_queue())
 
@@ -931,6 +1066,60 @@ class QuicConnection:
                 self._bytes_sent += len(dgram)
 
         return out
+
+    def _flush_zero_rtt_queue(self) -> list[bytes]:
+        """Build 0-RTT long-header packets from queued early data."""
+        if not self._zero_rtt_crypto or not self._peer_cid or not self._our_cid:
+            return []
+        packets: list[bytes] = []
+        for stream_id, data, end_stream in self._zero_rtt_stream_queue:
+            stream = self._get_or_create_stream(StreamId(stream_id))
+            offset = stream._send.sent_end
+            stream._send.write(data)
+            payload_buf = Buffer()
+            push_stream_frame(
+                payload_buf,
+                StreamFrame(
+                    stream_id=StreamId(stream_id),
+                    offset=offset,
+                    data=data,
+                    fin=end_stream,
+                ),
+            )
+            stream._send.advance(len(data), fin=end_stream)
+            plain_payload = payload_buf.data
+            pn = self._one_rtt_pn  # 0-RTT shares Application PN space
+            ciphertext_len = PN_SIZE + len(plain_payload) + AEAD_TAG_SIZE
+            header_buf = Buffer()
+            push_zero_rtt_packet_header(
+                header_buf,
+                destination_cid=self._peer_cid,
+                source_cid=self._our_cid,
+                payload_length=ciphertext_len,
+            )
+            plain_header = header_buf.data
+            encrypted = self._zero_rtt_crypto.encrypt_packet(
+                plain_header, plain_payload, pn
+            )
+            packets.append(encrypted)
+            self._application_space.on_packet_sent(
+                packet_number=pn,
+                sent_time=self._now,
+                sent_bytes=len(encrypted),
+                ack_eliciting=True,
+                in_flight=True,
+                frames=(
+                    SentStreamFrame(
+                        stream_id=stream_id,
+                        offset=offset,
+                        length=len(data),
+                        fin=end_stream,
+                    ),
+                ),
+            )
+            self._one_rtt_pn += 1
+        self._zero_rtt_stream_queue = []
+        return packets
 
     def _flush_stream_send_queue(self) -> list[bytes]:
         """Build Short header packets from _stream_send_queue, coalescing to MTU."""
@@ -1027,6 +1216,24 @@ class QuicConnection:
             self._cc.on_packet_sent(len(encrypted))
         self._one_rtt_pn += 1
         return encrypted
+
+    # --- Session ticket methods ---
+
+    def generate_session_ticket(self) -> tuple[bytes, object]:
+        """Server: generate a NewSessionTicket. Returns (nst_wire_bytes, SessionTicket).
+
+        The nst_wire_bytes should be sent to the client (e.g. via a post-handshake message).
+        The SessionTicket should be stored server-side for future PSK validation.
+        """
+        if not self._tls_ctx:
+            raise RuntimeError("No TLS context — handshake not started")
+        return self._tls_ctx.generate_session_ticket()
+
+    def receive_new_session_ticket(self, data: bytes) -> object:
+        """Client: parse a NewSessionTicket message. Returns a SessionTicket."""
+        if not self._client_tls_ctx:
+            raise RuntimeError("No client TLS context")
+        return self._client_tls_ctx.receive_new_session_ticket(data)
 
     # --- Public lifecycle methods ---
 

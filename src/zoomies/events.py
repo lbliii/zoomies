@@ -77,6 +77,16 @@ class StopSendingReceived:
 
 
 @dataclass(frozen=True, slots=True)
+class ZeroRttAccepted:
+    """Server accepted 0-RTT early data."""
+
+
+@dataclass(frozen=True, slots=True)
+class ZeroRttRejected:
+    """Server rejected 0-RTT early data. Streams will be resent as 1-RTT."""
+
+
+@dataclass(frozen=True, slots=True)
 class H3HeadersReceived:
     """HTTP/3 headers received (e.g. request or response)."""
 
@@ -106,6 +116,8 @@ QuicEvent = (
     | DecryptionFailed
     | StreamReset
     | StopSendingReceived
+    | ZeroRttAccepted
+    | ZeroRttRejected
 )
 
 # Union type for HTTP/3 events

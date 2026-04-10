@@ -117,6 +117,11 @@ class StreamSendState:
             return True
         return self._sent_end + length <= self._max_stream_data
 
+    def reset_for_0rtt_rejection(self) -> None:
+        """Reset send state for 0-RTT rejection — data will be resent as 1-RTT."""
+        self._sent_end = 0
+        self._fin_sent = False
+
 
 class Stream:
     """Stream manager — receive buffers, FIN, flow control."""
