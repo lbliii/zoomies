@@ -26,8 +26,8 @@
 1. Retry packet generation
 2. Version negotiation
 3. Connection migration / CID retirement
-4. Client mode
-5. QPACK dynamic table
+4. ~~Client mode~~ **Done** — client-side QUIC + HTTP/3 with loopback tests
+5. ~~QPACK dynamic table~~ **Done** — RFC 9204 encoder/decoder
 
 ## Production (0.4+) — Optional
 

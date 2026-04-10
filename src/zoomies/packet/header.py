@@ -157,9 +157,11 @@ def pull_quic_header(buf: Buffer, host_cid_length: int | None = None) -> LongHea
     if host_cid_length is None:
         raise ValueError("host_cid_length required for short header")
     dest_cid = buf.pull_bytes(host_cid_length)
-    # RFC 9000 17.3: 00=1 byte, 01=2 bytes, 10=4 bytes, 11=4 bytes
-    pn_len_map = (1, 2, 4, 4)
-    pn_len = pn_len_map[first_byte & 0x03]
+    # PN length bits (0-1) in first byte are header-protected, so we can't
+    # read the actual PN length from the wire. We always use 4-byte PNs
+    # (matching PN_SIZE in connection.py). Skip 4 bytes so buf.tell() points
+    # past the header — decrypt_packet needs encrypted_offset after the PN.
+    pn_len = 4
     pn_bytes = buf.pull_bytes(pn_len)
     pn = int.from_bytes(pn_bytes, "big")
     return ShortHeader(
