@@ -39,12 +39,15 @@ Native to the b-stack (Pounce, Chirp); no b-stack deps. Usable anywhere. Built f
 """
 
 from zoomies.core import QuicConfiguration, QuicConnection
+from zoomies.core.configuration import ZeroRttPolicy
+from zoomies.crypto.tls import SessionTicket
 from zoomies.events import (
     ConnectionClosed,
     DatagramReceived,
     H3DataReceived,
     H3HeadersReceived,
     HandshakeComplete,
+    NewSessionTicket,
     QuicEvent,
     StreamDataReceived,
     ZeroRttAccepted,
@@ -60,11 +63,14 @@ __all__ = [
     "H3HeadersReceived",
     "H3StreamSender",
     "HandshakeComplete",
+    "NewSessionTicket",
     "QuicConfiguration",
     "QuicConnection",
     "QuicEvent",
+    "SessionTicket",
     "StreamDataReceived",
     "ZeroRttAccepted",
+    "ZeroRttPolicy",
     "ZeroRttRejected",
 ]
 
