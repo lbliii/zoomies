@@ -669,10 +669,16 @@ class QuicClientTlsContext:
         verified = False
         for ca_cert in ca_certs_list:
             try:
-                ca_cert.public_key().verify(
+                pub = ca_cert.public_key()
+                if not isinstance(pub, ec.EllipticCurvePublicKey):
+                    continue
+                hash_alg = server_cert.signature_hash_algorithm
+                if hash_alg is None:
+                    continue
+                pub.verify(
                     server_cert.signature,
                     server_cert.tbs_certificate_bytes,
-                    ec.ECDSA(server_cert.signature_hash_algorithm),
+                    ec.ECDSA(hash_alg),
                 )
                 verified = True
                 break
@@ -690,9 +696,10 @@ class QuicClientTlsContext:
         verify_data = b" " * 64 + SERVER_CONTEXT_STRING + b"\x00" + self._transcript_at_cert
         server_cert = x509.load_der_x509_certificate(self._server_cert_der)
         if algorithm == SIG_ECDSA_SECP256R1_SHA256:
-            server_cert.public_key().verify(
-                signature, verify_data, ec.ECDSA(hashes.SHA256())
-            )
+            pub = server_cert.public_key()
+            if not isinstance(pub, ec.EllipticCurvePublicKey):
+                raise ValueError("Expected ECDSA key for signature verification")
+            pub.verify(signature, verify_data, ec.ECDSA(hashes.SHA256()))
         else:
             raise ValueError(f"Unsupported signature algorithm: {algorithm}")
         self._handshake_hash.update(msg)

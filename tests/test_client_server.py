@@ -47,7 +47,7 @@ def _handshake(client: QuicConnection, server: QuicConnection) -> None:
     _transfer(client, server)
 
     # Client receives server response — may need multiple rounds
-    # Server sends: Initial (ServerHello) + Handshake (EE+Cert+CertVerify+Finished) + 1-RTT (HANDSHAKE_DONE)
+    # Server sends Initial+Handshake+1-RTT (ServerHello, EE, Cert, Finished, HANDSHAKE_DONE)
     _transfer(server, client)
 
     # Client sends: Handshake (client Finished) + ACKs

@@ -63,10 +63,10 @@ def test_client_build_client_hello_with_sni() -> None:
 
 def test_build_parse_client_hello_roundtrip() -> None:
     """_build_client_hello output parses correctly with _parse_client_hello."""
+    import os
+
     from cryptography.hazmat.primitives.asymmetric import x25519
     from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
-
-    import os
 
     priv = x25519.X25519PrivateKey.generate()
     pub = priv.public_key().public_bytes(Encoding.Raw, PublicFormat.Raw)
@@ -91,7 +91,7 @@ def test_parse_server_hello_from_real_server() -> None:
     # Server response starts with ServerHello
     server_hello_end = _find_message_end(result.data_to_send, 0)
     server_hello_bytes = result.data_to_send[:server_hello_end]
-    random, session_id, key_share = _parse_server_hello(server_hello_bytes)
+    random, _session_id, key_share = _parse_server_hello(server_hello_bytes)
     assert len(random) == 32
     assert key_share[0] == 0x001D  # X25519
     assert len(key_share[1]) == 32

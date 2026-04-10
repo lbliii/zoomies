@@ -15,7 +15,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from zoomies import QuicConfiguration, QuicConnection
-from zoomies.events import H3DataReceived, H3HeadersReceived, StreamDataReceived
+from zoomies.events import H3DataReceived, H3HeadersReceived
 from zoomies.h3 import H3Connection
 
 ADDR = ("127.0.0.1", 4433)
