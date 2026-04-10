@@ -1,6 +1,6 @@
 # Zoomies Roadmap
 
-## Current: Alpha (0.2.x)
+## Previous: Alpha (0.2.x)
 
 - TLS 1.3 handshake (cryptography) — Handshake + 1-RTT keys
 - Handshake packet handling — CRYPTO frames, TLS in Handshake packets
@@ -21,17 +21,19 @@
 
 **Target achieved:** End-to-end GET / with HTTP/3 response over real TLS, with loss recovery and congestion control.
 
-## Beta (0.3.x) — Interoperable
+## Current: Beta (0.3.x) — Interoperable
 
-1. Retry packet generation
-2. Version negotiation
-3. Connection migration / CID retirement
-4. ~~Client mode~~ **Done** — client-side QUIC + HTTP/3 with loopback tests
-5. ~~QPACK dynamic table~~ **Done** — RFC 9204 encoder/decoder
+- ~~Client mode~~ **Done** — client-side QUIC + HTTP/3 with loopback tests
+- ~~QPACK dynamic table~~ **Done** — RFC 9204 encoder/decoder
+- ~~0-RTT early data~~ **Done** — PSK resumption with send/receive and anti-replay
+- Retry packet generation
+- Version negotiation
+- Connection migration / CID retirement
+
+**Target achieved:** Client and server mode with 0-RTT, QPACK dynamic table, and constant-time TLS verification.
 
 ## Production (0.4+) — Optional
 
-1. 0-RTT data
-2. Multipath QUIC
-3. ECN support
-4. Performance tuning and benchmarks against aioquic
+1. Multipath QUIC
+2. ECN support
+3. Performance tuning and benchmarks against aioquic
