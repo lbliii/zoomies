@@ -83,6 +83,8 @@ class TlsHandshakeResult:
     client_hello_hash: bytes | None = None
     is_psk: bool = False
     early_data_accepted: bool = False
+    psk_ticket_data: bytes | None = None
+    psk_obfuscated_age: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -336,6 +338,8 @@ class QuicTlsContext:
         self._is_psk: bool = False
         self._early_secret: bytes | None = None
         self._client_hello_hash: bytes | None = None
+        self._psk_ticket_data: bytes | None = None
+        self._psk_obfuscated_age: int = 0
         # PSK state for session ticket validation
         self._session_tickets: list[SessionTicket] = []
         self._ticket_nonce_counter: int = 0
@@ -393,6 +397,8 @@ class QuicTlsContext:
                         is_psk=self._is_psk,
                         early_secret=self._early_secret,
                         client_hello_hash=self._client_hello_hash,
+                        psk_ticket_data=self._psk_ticket_data,
+                        psk_obfuscated_age=self._psk_obfuscated_age,
                     )
                 else:
                     break
@@ -412,6 +418,8 @@ class QuicTlsContext:
             is_psk=self._is_psk,
             early_secret=self._early_secret,
             client_hello_hash=self._client_hello_hash,
+            psk_ticket_data=self._psk_ticket_data,
+            psk_obfuscated_age=self._psk_obfuscated_age,
         )
 
     def _handle_client_hello(self, msg: bytes) -> bytes:
@@ -430,7 +438,9 @@ class QuicTlsContext:
         psk: bytes | None = None
         psk_identity_index: int | None = None
         if EXT_PRE_SHARED_KEY in ch_info.extensions and self._session_tickets:
-            psk, psk_identity_index = self._try_validate_psk(msg, ch_info)
+            psk, psk_identity_index, self._psk_ticket_data, self._psk_obfuscated_age = (
+                self._try_validate_psk(msg, ch_info)
+            )
 
         # Key exchange (always required — psk_dhe_ke mode)
         peer_public = None
@@ -521,8 +531,11 @@ class QuicTlsContext:
 
     def _try_validate_psk(
         self, msg: bytes, ch_info: _ClientHelloInfo
-    ) -> tuple[bytes | None, int | None]:
-        """Try to validate PSK from ClientHello. Returns (psk, identity_index) or (None, None)."""
+    ) -> tuple[bytes | None, int | None, bytes | None, int]:
+        """Try to validate PSK from ClientHello.
+
+        Returns (psk, identity_index, ticket_data, obfuscated_age) or (None, None, None, 0).
+        """
         psk_ext = ch_info.extensions[EXT_PRE_SHARED_KEY]
         psk_buf = Buffer(data=psk_ext)
 
@@ -544,10 +557,10 @@ class QuicTlsContext:
             binders.append(binder)
 
         if len(identities) != len(binders):
-            return None, None
+            return None, None, None, 0
 
         # Try each identity against our known tickets
-        for idx, (identity, _obfuscated_age) in enumerate(identities):
+        for idx, (identity, obfuscated_age) in enumerate(identities):
             for ticket in self._session_tickets:
                 if identity == ticket.ticket:
                     # Validate binder
@@ -555,10 +568,10 @@ class QuicTlsContext:
                     early_secret = _hkdf_extract(bytes(32), psk)
                     binder_key = _hkdf_expand_label(early_secret, b"res binder", b"", 32)
 
-                    # Binder is HMAC over truncated ClientHello (up to binders)
-                    # The binders_data starts after the 2-byte binders length prefix
-                    # We need to find the offset in msg where binders start
-                    binders_len = 2 + len(binders_data)  # 2-byte length + data
+                    # RFC 8446 §4.2.11.2: partial ClientHello is "up to and including
+                    # the PreSharedKeyExtension.identities field" — i.e. we exclude
+                    # the binders list length prefix (2 bytes) and binder entries.
+                    binders_len = 2 + len(binders_data)
                     truncated_ch = msg[: len(msg) - binders_len]
                     truncated_hash = hashes.Hash(hashes.SHA256())
                     truncated_hash.update(truncated_ch)
@@ -567,9 +580,9 @@ class QuicTlsContext:
                     expected_binder = h.finalize()
 
                     if secrets.compare_digest(binders[idx], expected_binder):
-                        return psk, idx
+                        return psk, idx, identity, obfuscated_age
 
-        return None, None
+        return None, None, None, 0
 
     def _handle_finished(self, msg: bytes) -> None:
         """Verify client Finished and derive resumption_master_secret."""
@@ -756,9 +769,9 @@ def _build_client_hello(
         early_secret = _hkdf_extract(bytes(32), psk)
         binder_key = _hkdf_expand_label(early_secret, b"res binder", b"", 32)
 
-        # Truncated CH = everything up to the binder value
-        # binders_data = 1-byte length + 32-byte binder = 33 bytes
-        # binders block = 2-byte length prefix + 33 bytes = 35 bytes
+        # RFC 8446 §4.2.11.2: partial ClientHello is "up to and including
+        # the PreSharedKeyExtension.identities field" — we exclude the
+        # binders list length prefix (2 bytes) and binder entries.
         binders_len = 2 + len(binders_data)
         truncated_ch = msg[: len(msg) - binders_len]
         truncated_hash = hashes.Hash(hashes.SHA256())

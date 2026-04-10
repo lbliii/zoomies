@@ -425,7 +425,7 @@ class QuicConnection:
         self, data: bytes, buf: Buffer, header: LongHeader, events: list[QuicEvent]
     ) -> None:
         """Server: handle 0-RTT packet containing early data."""
-        if not self._zero_rtt_crypto:
+        if self._is_client or not self._zero_rtt_crypto:
             return
         encrypted_offset = buf.tell()
         try:
@@ -545,18 +545,22 @@ class QuicConnection:
         for sid in resend_streams:
             stream = self._get_or_create_stream(StreamId(sid))
             stream._send.reset_for_0rtt_rejection()
-        # Reset Application PN space — 0-RTT PNs were never acknowledged
+        # Reset Application PN space. Resetting to PN 0 is safe here because the
+        # server rejected 0-RTT — it never derived 0-RTT keys, so it never observed
+        # any 0-RTT packet numbers. Both sides agree 1-RTT starts at PN 0.
         self._one_rtt_pn = 0
         self._application_space = PacketSpace()
         # Discard 0-RTT crypto — no longer needed
         self._zero_rtt_crypto = None
 
-    def _check_zero_rtt_policy(self) -> bool:
+    def _check_zero_rtt_policy(
+        self, ticket_data: bytes | None = None, obfuscated_age: int = 0
+    ) -> bool:
         """Check if 0-RTT is allowed by the configured policy. Default: reject."""
         policy = self._config.zero_rtt_policy
         if policy is None:
             return False
-        return policy.allow_0rtt(ticket_data=b"", obfuscated_age=0)
+        return policy.allow_0rtt(ticket_data=ticket_data or b"", obfuscated_age=obfuscated_age)
 
     def _feed_crypto_to_server_tls(self, data: bytes, events: list[QuicEvent]) -> None:
         """Server: feed CRYPTO data to server TLS context."""
@@ -572,7 +576,7 @@ class QuicConnection:
             and result.early_secret is not None
             and result.client_hello_hash is not None
             and self._zero_rtt_crypto is None
-            and self._check_zero_rtt_policy()
+            and self._check_zero_rtt_policy(result.psk_ticket_data, result.psk_obfuscated_age)
         ):
             self._zero_rtt_crypto = CryptoPair()
             self._zero_rtt_crypto.setup_0rtt(
@@ -1209,7 +1213,7 @@ class QuicConnection:
 
     # --- Session ticket methods ---
 
-    def generate_session_ticket(self) -> tuple[bytes, object]:
+    def generate_session_ticket(self) -> tuple[bytes, SessionTicket]:
         """Server: generate a NewSessionTicket. Returns (nst_wire_bytes, SessionTicket).
 
         The nst_wire_bytes should be sent to the client (e.g. via a post-handshake message).
@@ -1219,7 +1223,7 @@ class QuicConnection:
             raise RuntimeError("No TLS context — handshake not started")
         return self._tls_ctx.generate_session_ticket()
 
-    def receive_new_session_ticket(self, data: bytes) -> object:
+    def receive_new_session_ticket(self, data: bytes) -> SessionTicket:
         """Client: parse a NewSessionTicket message. Returns a SessionTicket."""
         if not self._client_tls_ctx:
             raise RuntimeError("No client TLS context")
