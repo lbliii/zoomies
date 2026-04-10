@@ -12,7 +12,8 @@ Native to the b-stack (Pounce, Chirp); no b-stack deps. Usable anywhere. Built f
   `ZeroRttAccepted`, `ZeroRttRejected`
 - `QuicConfiguration(is_client=True)` + `QuicConnection.connect()`: Client mode
 - 0-RTT early data: PSK resumption, send/receive, accept/reject
-- `QpackEncoder` / `QpackDecoder`: Stateful QPACK with dynamic table (RFC 9204)
+- `zoomies.h3.QpackEncoder` / `zoomies.h3.QpackDecoder`: Stateful QPACK with dynamic table
+  (RFC 9204)
 
 **Design Philosophy:**
 
