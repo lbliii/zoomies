@@ -21,8 +21,15 @@ Hands-on guides that walk you through complete protocol workflows. Start with [[
 :description: Wire Zoomies to a UDP socket and echo stream data back to the client
 :::{/card}
 
+:::{card} HTTP/3 Client & Server
+:icon: globe
+:link: ./client-server/
+:description: Run a full HTTP/3 request and response over loopback
+:::{/card}
+
 :::{/cards}
 
 ## All Tutorials
 
 - [[docs/tutorials/echo-server|Echo Server]] — Wire Zoomies to a UDP socket (Beginner, 15 min)
+- [[docs/tutorials/client-server|HTTP/3 Client & Server]] — Full request/response over QUIC (Beginner, 15 min)

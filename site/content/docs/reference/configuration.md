@@ -25,6 +25,35 @@ config = QuicConfiguration(
 | `alpn_protocols` | `list[str]` | `["h3"]` | ALPN protocol negotiation list |
 | `max_stream_data` | `int` | `1048576` | Per-stream flow control limit (bytes) |
 | `idle_timeout` | `float` | `30.0` | Connection idle timeout (seconds) |
+| `session_ticket` | `SessionTicket \| None` | `None` | Stored session ticket for 0-RTT resumption (client only) |
+| `zero_rtt_policy` | `ZeroRttPolicy \| None` | `None` | Replay protection policy for 0-RTT data (server only) |
+
+### ZeroRttPolicy
+
+A protocol class you implement to control whether the server accepts 0-RTT early data:
+
+```python
+class ZeroRttPolicy(Protocol):
+    def allow_0rtt(self, ticket_data: bytes, obfuscated_age: int) -> bool:
+        """Return True to accept 0-RTT data for this ticket."""
+        ...
+```
+
+### SessionTicket
+
+Issued by the server after a successful handshake. Store it on the client and pass it back via `session_ticket` on reconnection to enable 0-RTT.
+
+```python
+from zoomies.crypto.tls import SessionTicket
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ticket` | `bytes` | Opaque ticket data |
+| `resumption_secret` | `bytes` | PSK derived from the original handshake |
+| `max_early_data` | `int` | Maximum 0-RTT data size (bytes) |
+| `cipher_suite` | `int` | TLS cipher suite identifier |
+| `lifetime` | `int` | Ticket validity in seconds (default 7200) |
 
 ## Server configuration
 
