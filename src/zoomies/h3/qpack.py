@@ -157,9 +157,7 @@ def decode_headers(data: bytes) -> list[Header]:
     return result
 
 
-_STATIC_INDEX: dict[tuple[str, str], int] = {
-    (n, v): i for i, (n, v) in enumerate(STATIC_TABLE)
-}
+_STATIC_INDEX: dict[tuple[str, str], int] = {(n, v): i for i, (n, v) in enumerate(STATIC_TABLE)}
 _STATIC_NAME_INDEX: dict[str, int] = {}
 for _i, (_n, _v) in enumerate(STATIC_TABLE):
     if _n not in _STATIC_NAME_INDEX:
@@ -261,17 +259,11 @@ class QpackEncoder:
 
         New entries are inserted into the dynamic table after encoding.
         """
-        return self._do_encode(
-            [(h.name, h.value) for h in headers]
-        )
+        return self._do_encode([(h.name, h.value) for h in headers])
 
-    def encode_from_bytes(
-        self, headers: list[tuple[bytes, bytes]]
-    ) -> bytes:
+    def encode_from_bytes(self, headers: list[tuple[bytes, bytes]]) -> bytes:
         """Encode headers from bytes (ASGI-compatible)."""
-        return self._do_encode(
-            [(n.decode("ascii"), v.decode("ascii")) for n, v in headers]
-        )
+        return self._do_encode([(n.decode("ascii"), v.decode("ascii")) for n, v in headers])
 
     def encoder_stream_data(self) -> bytes:
         """Return pending encoder stream instructions and clear buffer."""
@@ -287,9 +279,7 @@ class QpackEncoder:
 
         header_buf = Buffer()
         for name, value in headers:
-            ref_abs = self._encode_header(
-                header_buf, name, value, base, pending_inserts
-            )
+            ref_abs = self._encode_header(header_buf, name, value, base, pending_inserts)
             if ref_abs is not None and ref_abs > max_ref_abs:
                 max_ref_abs = ref_abs
 
@@ -320,9 +310,7 @@ class QpackEncoder:
                         value=value,
                     )
                 else:
-                    encode_insert_literal(
-                        self._pending_instructions, name, value
-                    )
+                    encode_insert_literal(self._pending_instructions, name, value)
 
         return prefix.data + header_buf.data
 
@@ -356,9 +344,7 @@ class QpackEncoder:
         if static_name_idx >= 0:
             _push_prefixed_int(buf, 0x50, 4, static_name_idx)
             _push_string(buf, value, prefix_bits=7)
-            pending_inserts.append(
-                (STATIC_TABLE[static_name_idx][0], value, static_name_idx)
-            )
+            pending_inserts.append((STATIC_TABLE[static_name_idx][0], value, static_name_idx))
             return None
 
         # 4. Dynamic name ref + literal value (only entries before base)

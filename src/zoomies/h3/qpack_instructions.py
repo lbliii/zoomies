@@ -17,9 +17,7 @@ def encode_set_capacity(buf: Buffer, capacity: int) -> None:
     _push_prefixed_int(buf, 0x20, 5, capacity)
 
 
-def encode_insert_name_ref(
-    buf: Buffer, *, is_static: bool, name_index: int, value: str
-) -> None:
+def encode_insert_name_ref(buf: Buffer, *, is_static: bool, name_index: int, value: str) -> None:
     """Encode Insert With Name Reference instruction (§4.3.2).
 
     Static ref:  0b1[1]xxxxxx + varint index (6-bit prefix) + value
@@ -97,11 +95,14 @@ def decode_encoder_instruction(buf: Buffer) -> tuple[str, dict]:
         is_static = bool(byte & 0x40)
         name_index = _pull_prefixed_int(buf, byte, 6)
         value = _pull_string(buf, prefix_bits=7)
-        return ("insert_name_ref", {
-            "is_static": is_static,
-            "name_index": name_index,
-            "value": value,
-        })
+        return (
+            "insert_name_ref",
+            {
+                "is_static": is_static,
+                "name_index": name_index,
+                "value": value,
+            },
+        )
     elif first & 0x40:
         # Insert With Literal Name (§4.3.3)
         byte = buf.pull_uint8()

@@ -89,6 +89,7 @@ class TestDecoderAdversarial:
         # encoded_ric = 257 > 256 → should fail
         buf = Buffer()
         from zoomies.h3.qpack_instructions import _push_prefixed_int
+
         _push_prefixed_int(buf, 0x00, 8, 257)
         buf.push_uint8(0)  # Delta Base = 0
         with pytest.raises(ValueError, match="full range"):

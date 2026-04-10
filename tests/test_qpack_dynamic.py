@@ -167,14 +167,10 @@ class TestH3ConnectionDynamic:
         sent: list[tuple[int, bytes, bool]] = []
 
         class MockSender:
-            def send_stream_data(
-                self, stream_id: int, data: bytes, end_stream: bool
-            ) -> None:
+            def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool) -> None:
                 sent.append((stream_id, data, end_stream))
 
-        conn = H3Connection(
-            sender=MockSender(), qpack_max_table_capacity=4096
-        )
+        conn = H3Connection(sender=MockSender(), qpack_max_table_capacity=4096)
 
         headers = [
             (b":status", b"200"),
@@ -200,9 +196,7 @@ class TestH3ConnectionDynamic:
         sent: list[tuple[int, bytes, bool]] = []
 
         class MockSender:
-            def send_stream_data(
-                self, stream_id: int, data: bytes, end_stream: bool
-            ) -> None:
+            def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool) -> None:
                 sent.append((stream_id, data, end_stream))
 
         conn = H3Connection(sender=MockSender())
@@ -232,9 +226,7 @@ class TestH3ConnectionDynamic:
         # Feed encoder instructions to the connection's decoder
         conn.feed_encoder_stream(enc.encoder_stream_data())
 
-        events = conn.stream_data_received(
-            stream_id=0, data=frame, end_stream=True
-        )
+        events = conn.stream_data_received(stream_id=0, data=frame, end_stream=True)
         assert len(events) == 1
         assert isinstance(events[0], H3HeadersReceived)
         assert events[0].headers[0] == (b":method", b"GET")

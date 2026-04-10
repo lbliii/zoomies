@@ -99,9 +99,7 @@ class TestPeerSettingsNegotiation:
         """Peer advertising more than local max gets capped."""
         conn = H3Connection(qpack_max_table_capacity=4096)
         assert conn.encoder is not None
-        conn.apply_peer_settings(
-            {SETTINGS_QPACK_MAX_TABLE_CAPACITY: 8192}
-        )
+        conn.apply_peer_settings({SETTINGS_QPACK_MAX_TABLE_CAPACITY: 8192})
         assert conn.encoder.table.capacity == 4096
 
     def test_apply_peer_settings_no_qpack_key(self) -> None:
@@ -128,9 +126,7 @@ class TestPeerSettingsNegotiation:
         payload = encode_settings(settings)
         frame = _encode_frame(H3_FRAME_SETTINGS, payload)
 
-        events = conn.stream_data_received(
-            stream_id=2, data=frame, end_stream=False
-        )
+        events = conn.stream_data_received(stream_id=2, data=frame, end_stream=False)
         # SETTINGS doesn't produce H3 events
         assert len(events) == 0
         # But peer settings should be applied

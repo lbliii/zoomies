@@ -45,21 +45,27 @@ class TestInsertNameRef:
         buf = Buffer()
         encode_insert_name_ref(buf, is_static=True, name_index=18, value="hello")
         result = decode_encoder_instruction(Buffer(data=buf.data))
-        assert result == ("insert_name_ref", {
-            "is_static": True,
-            "name_index": 18,
-            "value": "hello",
-        })
+        assert result == (
+            "insert_name_ref",
+            {
+                "is_static": True,
+                "name_index": 18,
+                "value": "hello",
+            },
+        )
 
     def test_dynamic_ref(self) -> None:
         buf = Buffer()
         encode_insert_name_ref(buf, is_static=False, name_index=3, value="world")
         result = decode_encoder_instruction(Buffer(data=buf.data))
-        assert result == ("insert_name_ref", {
-            "is_static": False,
-            "name_index": 3,
-            "value": "world",
-        })
+        assert result == (
+            "insert_name_ref",
+            {
+                "is_static": False,
+                "name_index": 3,
+                "value": "world",
+            },
+        )
 
     def test_empty_value(self) -> None:
         buf = Buffer()

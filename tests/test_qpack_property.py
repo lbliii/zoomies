@@ -66,9 +66,7 @@ def test_roundtrip_zero_capacity(headers: list[Header]) -> None:
     capacity=st.integers(min_value=32, max_value=512),
 )
 @settings(max_examples=50)
-def test_dynamic_table_size_invariant(
-    inserts: list[tuple[str, str]], capacity: int
-) -> None:
+def test_dynamic_table_size_invariant(inserts: list[tuple[str, str]], capacity: int) -> None:
     """Dynamic table size never exceeds capacity after any insert."""
     table = DynamicTable(capacity=capacity)
     for name, value in inserts:
@@ -87,9 +85,7 @@ def test_dynamic_table_size_invariant(
     capacity=st.integers(min_value=64, max_value=1024),
 )
 @settings(max_examples=30)
-def test_dynamic_table_size_accounting(
-    inserts: list[tuple[str, str]], capacity: int
-) -> None:
+def test_dynamic_table_size_accounting(inserts: list[tuple[str, str]], capacity: int) -> None:
     """Table size equals sum of entry sizes."""
     table = DynamicTable(capacity=capacity)
     for name, value in inserts:
@@ -97,7 +93,5 @@ def test_dynamic_table_size_accounting(
             continue
         table.insert(name, value)
 
-    expected_size = sum(
-        _entry_size(n, v) for n, v, _ in table._entries
-    )
+    expected_size = sum(_entry_size(n, v) for n, v, _ in table._entries)
     assert table.size == expected_size

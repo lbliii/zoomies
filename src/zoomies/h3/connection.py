@@ -39,9 +39,7 @@ H3_STREAM_TYPE_DECODER = 0x03
 class H3StreamSender(Protocol):
     """Protocol for sending H3 stream data into the QUIC layer."""
 
-    def send_stream_data(
-        self, stream_id: int, data: bytes, end_stream: bool
-    ) -> None: ...
+    def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool) -> None: ...
 
 
 def _encode_frame(frame_type: int, payload: bytes) -> bytes:
@@ -140,13 +138,9 @@ class H3Connection:
         """Return the SETTINGS this connection advertises."""
         settings: dict[int, int] = {}
         if self._qpack_max_table_capacity > 0:
-            settings[SETTINGS_QPACK_MAX_TABLE_CAPACITY] = (
-                self._qpack_max_table_capacity
-            )
+            settings[SETTINGS_QPACK_MAX_TABLE_CAPACITY] = self._qpack_max_table_capacity
         if self._qpack_blocked_streams > 0:
-            settings[SETTINGS_QPACK_BLOCKED_STREAMS] = (
-                self._qpack_blocked_streams
-            )
+            settings[SETTINGS_QPACK_BLOCKED_STREAMS] = self._qpack_blocked_streams
         return settings
 
     def settings_data(self) -> bytes | None:
@@ -208,9 +202,7 @@ class H3Connection:
             payload = self._encoder.encode_from_bytes(headers)
             enc_data = self._encoder.encoder_stream_data()
             if enc_data:
-                self._sender.send_stream_data(
-                    H3_STREAM_TYPE_ENCODER, enc_data, False
-                )
+                self._sender.send_stream_data(H3_STREAM_TYPE_ENCODER, enc_data, False)
         else:
             payload = encode_headers_from_bytes(headers)
 
