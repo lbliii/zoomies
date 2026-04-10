@@ -4,7 +4,7 @@
 [![Build Status](https://github.com/lbliii/zoomies/actions/workflows/tests.yml/badge.svg)](https://github.com/lbliii/zoomies/actions/workflows/tests.yml)
 [![Python 3.14+](https://img.shields.io/badge/python-3.14+-blue.svg)](https://pypi.org/project/zoomies/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)](https://pypi.org/project/zoomies/)
+[![Status: Beta](https://img.shields.io/badge/status-beta-yellow.svg)](https://pypi.org/project/zoomies/)
 
 **Free-threading-native QUIC and HTTP/3 for Python 3.14t — sans-I/O, typed**
 

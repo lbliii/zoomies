@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-04-10
+
+### Added
+
+- **QPACK dynamic table** (`zoomies.h3`) — Full RFC 9204 encoder/decoder with dynamic table support
+  - `DynamicTable` for header field indexing with size-bounded eviction
+  - Encoder and decoder instruction streams (`qpack_instructions`)
+  - Adversarial input protection and property-based testing
+  - `H3Connection` settings negotiation for dynamic table capacity
+- **QUIC client mode** — Full client-side QUIC and HTTP/3 support
+  - Client-initiated handshake with TLS 1.3 ClientHello
+  - Loopback client/server integration tests
+  - HTTP/3 client request/response over QUIC
+  - `client_server.py` example for end-to-end usage
+- **0-RTT early data** — PSK resumption with early data send/receive
+  - Pre-shared key (PSK) storage and resumption
+  - 0-RTT packet building and processing
+  - Early data acceptance and rejection handling
+  - Server-side anti-replay protection
+  - `EarlyDataAccepted` / `EarlyDataRejected` events
+- **Documentation site** — GitHub Pages deployment with Bengal static site generator
+  - Concept guides (sans-I/O, free-threading, HTTP/3, connection lifecycle)
+  - Reference docs (connection, events, configuration)
+  - Tutorials (echo server, quickstart)
+
+### Security
+
+- Use constant-time comparison (`hmac.compare_digest`) for TLS Finished message verification
+
 ## [0.2.0] - 2026-03-25
 
 ### Added
