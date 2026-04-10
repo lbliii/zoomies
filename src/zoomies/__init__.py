@@ -8,7 +8,12 @@ Native to the b-stack (Pounce, Chirp); no b-stack deps. Usable anywhere. Built f
 - `QuicConnection.datagram_received()`: Feed UDP datagrams in, get protocol events
 - `QuicConnection.send_datagrams()`: Get outbound datagrams to transmit
 - `H3Connection`: HTTP/3 connection state machine (handle_event, send_headers, send_data)
-- Events: `HandshakeComplete`, `StreamDataReceived`, `H3HeadersReceived`, `H3DataReceived`
+- Events: `HandshakeComplete`, `StreamDataReceived`, `H3HeadersReceived`, `H3DataReceived`,
+  `ZeroRttAccepted`, `ZeroRttRejected`
+- `QuicConfiguration(is_client=True)` + `QuicConnection.connect()`: Client mode
+- 0-RTT early data: PSK resumption, send/receive, accept/reject
+- `zoomies.h3.QpackEncoder` / `zoomies.h3.QpackDecoder`: Stateful QPACK with dynamic table
+  (RFC 9204)
 
 **Design Philosophy:**
 
@@ -42,6 +47,8 @@ from zoomies.events import (
     HandshakeComplete,
     QuicEvent,
     StreamDataReceived,
+    ZeroRttAccepted,
+    ZeroRttRejected,
 )
 from zoomies.h3 import H3Connection, H3StreamSender
 
@@ -57,6 +64,8 @@ __all__ = [
     "QuicConnection",
     "QuicEvent",
     "StreamDataReceived",
+    "ZeroRttAccepted",
+    "ZeroRttRejected",
 ]
 
-__version__ = "0.1.0"
+__version__ = "0.3.1"
