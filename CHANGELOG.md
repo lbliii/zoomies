@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-04-10
+
+### Fixed
+
+- Export `ZeroRttAccepted` and `ZeroRttRejected` events from top-level `zoomies` package
+- Export `QpackEncoder` and `QpackDecoder` from `zoomies.h3` subpackage
+- Bump `__version__` from `0.1.0` to match `pyproject.toml` (was never updated in 0.3.0)
+- Correct event names in docs: `ZeroRttAccepted`/`ZeroRttRejected` (not `EarlyDataAccepted`/`EarlyDataRejected`)
+
 ## [0.3.0] - 2026-04-10
 
 ### Added
@@ -26,7 +35,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 0-RTT packet building and processing
   - Early data acceptance and rejection handling
   - Server-side anti-replay protection
-  - `EarlyDataAccepted` / `EarlyDataRejected` events
+  - `ZeroRttAccepted` / `ZeroRttRejected` events
 - **Documentation site** — GitHub Pages deployment with Bengal static site generator
   - Concept guides (sans-I/O, free-threading, HTTP/3, connection lifecycle)
   - Reference docs (connection, events, configuration)
