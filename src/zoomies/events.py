@@ -5,6 +5,8 @@ Sans-I/O: protocol handlers produce these events. No I/O, no side effects.
 
 from dataclasses import dataclass
 
+from zoomies.crypto.tls import SessionTicket
+
 
 @dataclass(frozen=True, slots=True)
 class DatagramReceived:
@@ -87,6 +89,18 @@ class ZeroRttRejected:
 
 
 @dataclass(frozen=True, slots=True)
+class NewSessionTicket:
+    """Server issued a session ticket for TLS 1.3 resumption and 0-RTT.
+
+    Emitted on the client side after the handshake when the server sends
+    a NewSessionTicket message. The caller should store the ticket and
+    pass it via ``QuicConfiguration.session_ticket`` on reconnection.
+    """
+
+    ticket: SessionTicket
+
+
+@dataclass(frozen=True, slots=True)
 class H3HeadersReceived:
     """HTTP/3 headers received (e.g. request or response)."""
 
@@ -118,6 +132,7 @@ QuicEvent = (
     | StopSendingReceived
     | ZeroRttAccepted
     | ZeroRttRejected
+    | NewSessionTicket
 )
 
 # Union type for HTTP/3 events
