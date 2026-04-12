@@ -66,9 +66,7 @@ def _collect_h3_events(
     return h3_events
 
 
-def _retry_handshake(
-    client: QuicConnection, server: QuicConnection
-) -> list:
+def _retry_handshake(client: QuicConnection, server: QuicConnection) -> list:
     """Complete handshake with Retry. Returns all client events from the flow."""
     all_client_events: list = []
 
@@ -107,9 +105,7 @@ def test_retry_h3_get_request_response() -> None:
     server_quic = QuicConnection(
         QuicConfiguration(certificate=CERT, private_key=KEY, retry_token_handler=handler)
     )
-    client_quic = QuicConnection(
-        QuicConfiguration(is_client=True, verify_mode=False)
-    )
+    client_quic = QuicConnection(QuicConfiguration(is_client=True, verify_mode=False))
     h3_client = H3Connection(sender=client_quic)
     h3_server = H3Connection(sender=server_quic)
 
@@ -179,9 +175,7 @@ def test_retry_h3_post_with_body() -> None:
     server_quic = QuicConnection(
         QuicConfiguration(certificate=CERT, private_key=KEY, retry_token_handler=handler)
     )
-    client_quic = QuicConnection(
-        QuicConfiguration(is_client=True, verify_mode=False)
-    )
+    client_quic = QuicConnection(QuicConfiguration(is_client=True, verify_mode=False))
     h3_client = H3Connection(sender=client_quic)
     h3_server = H3Connection(sender=server_quic)
 
@@ -220,9 +214,7 @@ def test_retry_bidirectional_stream_after_handshake() -> None:
     server_quic = QuicConnection(
         QuicConfiguration(certificate=CERT, private_key=KEY, retry_token_handler=handler)
     )
-    client_quic = QuicConnection(
-        QuicConfiguration(is_client=True, verify_mode=False)
-    )
+    client_quic = QuicConnection(QuicConfiguration(is_client=True, verify_mode=False))
 
     _retry_handshake(client_quic, server_quic)
 
@@ -250,9 +242,7 @@ def test_retry_multiple_h3_requests() -> None:
     server_quic = QuicConnection(
         QuicConfiguration(certificate=CERT, private_key=KEY, retry_token_handler=handler)
     )
-    client_quic = QuicConnection(
-        QuicConfiguration(is_client=True, verify_mode=False)
-    )
+    client_quic = QuicConnection(QuicConfiguration(is_client=True, verify_mode=False))
     h3_client = H3Connection(sender=client_quic)
     h3_server = H3Connection(sender=server_quic)
 
@@ -296,9 +286,7 @@ def test_retry_odcid_tracked_correctly() -> None:
     server_quic = QuicConnection(
         QuicConfiguration(certificate=CERT, private_key=KEY, retry_token_handler=handler)
     )
-    client_quic = QuicConnection(
-        QuicConfiguration(is_client=True, verify_mode=False)
-    )
+    client_quic = QuicConnection(QuicConfiguration(is_client=True, verify_mode=False))
 
     # Trigger connect so the client generates its initial destination CID,
     # then capture it before the Retry flow overwrites it.
@@ -307,12 +295,12 @@ def test_retry_odcid_tracked_correctly() -> None:
     assert len(original_peer_cid) > 0
 
     # Run the Retry handshake manually (connect already called)
-    _transfer(client_quic, server_quic)       # Initial (no token)
-    _transfer(server_quic, client_quic)       # Retry
-    _transfer(client_quic, server_quic)       # Initial (with token)
-    _transfer(server_quic, client_quic)       # Handshake
-    _transfer(client_quic, server_quic)       # Client Finished
-    _transfer(server_quic, client_quic)       # ACKs
+    _transfer(client_quic, server_quic)  # Initial (no token)
+    _transfer(server_quic, client_quic)  # Retry
+    _transfer(client_quic, server_quic)  # Initial (with token)
+    _transfer(server_quic, client_quic)  # Handshake
+    _transfer(client_quic, server_quic)  # Client Finished
+    _transfer(server_quic, client_quic)  # ACKs
 
     # Server must have stored the ODCID from the first Initial
     assert server_quic._original_destination_cid is not None
