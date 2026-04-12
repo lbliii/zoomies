@@ -976,9 +976,7 @@ class QuicConnection:
                 # SentPingFrame: NOT retransmitted
                 # SentNewConnectionIdFrame: NOT retransmitted (idempotent)
 
-    def _queue_new_connection_id(
-        self, events: list[QuicEvent], retire_prior_to: int = 0
-    ) -> None:
+    def _queue_new_connection_id(self, events: list[QuicEvent], retire_prior_to: int = 0) -> None:
         """Queue 1-RTT packet with NEW_CONNECTION_ID for connection migration."""
         if not self._one_rtt_crypto or not self._peer_cid:
             return
@@ -987,9 +985,7 @@ class QuicConnection:
         self._next_cid_sequence += 1
         self._our_seq_to_cid[sequence] = new_cid
         self._our_cids.add(new_cid)
-        events.append(
-            ConnectionIdIssued(connection_id=new_cid, retire_prior_to=retire_prior_to)
-        )
+        events.append(ConnectionIdIssued(connection_id=new_cid, retire_prior_to=retire_prior_to))
         payload_buf = Buffer()
         push_new_connection_id(
             payload_buf,
@@ -1082,9 +1078,7 @@ class QuicConnection:
                 self._rtt = RttEstimator()
                 events.append(ConnectionMigrated(old_addr=old_addr, new_addr=new_addr))
                 # Issue new CID with advanced retire_prior_to (linkability prevention)
-                self._queue_new_connection_id(
-                    events, retire_prior_to=self._next_cid_sequence - 1
-                )
+                self._queue_new_connection_id(events, retire_prior_to=self._next_cid_sequence - 1)
 
     def _queue_handshake_done(self) -> None:
         """Queue HANDSHAKE_DONE frame in a 1-RTT packet (RFC 9000 19.20)."""
