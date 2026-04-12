@@ -44,6 +44,7 @@ from zoomies.core.configuration import ZeroRttPolicy
 from zoomies.crypto.tls import SessionTicket
 from zoomies.events import (
     ConnectionClosed,
+    ConnectionMigrated,
     DatagramReceived,
     H3DataReceived,
     H3HeadersReceived,
@@ -59,6 +60,7 @@ from zoomies.h3 import H3Connection, H3StreamSender
 
 __all__ = [
     "ConnectionClosed",
+    "ConnectionMigrated",
     "DatagramReceived",
     "H3Connection",
     "H3DataReceived",

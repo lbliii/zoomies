@@ -108,6 +108,14 @@ class RetryReceived:
 
 
 @dataclass(frozen=True, slots=True)
+class ConnectionMigrated:
+    """Peer migrated to a new address (path validation succeeded)."""
+
+    old_addr: tuple[str, int]
+    new_addr: tuple[str, int]
+
+
+@dataclass(frozen=True, slots=True)
 class H3HeadersReceived:
     """HTTP/3 headers received (e.g. request or response)."""
 
@@ -141,6 +149,7 @@ QuicEvent = (
     | ZeroRttRejected
     | NewSessionTicket
     | RetryReceived
+    | ConnectionMigrated
 )
 
 # Union type for HTTP/3 events

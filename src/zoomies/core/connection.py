@@ -18,6 +18,7 @@ from zoomies.events import (
     ConnectionClosed,
     ConnectionIdIssued,
     ConnectionIdRetired,
+    ConnectionMigrated,
     DatagramReceived,
     DecryptionFailed,
     HandshakeComplete,
@@ -47,6 +48,7 @@ from zoomies.frames.connection_id import (
 from zoomies.frames.path import (
     pull_path_challenge,
     pull_path_response,
+    push_path_challenge,
     push_path_response,
 )
 from zoomies.frames.crypto import CryptoFrame, pull_crypto_frame, push_crypto_frame
@@ -202,6 +204,8 @@ class QuicConnection:
         # Path validation (RFC 9000 §9)
         self._pending_path_responses: list[bytes] = []  # challenge data to echo back
         self._pending_path_challenge: bytes | None = None  # challenge we sent, awaiting response
+        self._migrating_addr: tuple[str, int] | None = None  # addr being validated
+        self._peer_disable_active_migration: bool = False  # peer's transport param
 
     @property
     def our_cid(self) -> bytes:
@@ -331,9 +335,23 @@ class QuicConnection:
         """Process incoming datagram; returns events."""
         events: list[QuicEvent] = []
         events.append(DatagramReceived(data=data, addr=addr))
-        self._peer_addr = addr
         self._now = now
         self._bytes_received += len(data)
+
+        # Address change detection (RFC 9000 §9):
+        # During handshake (INITIAL/HANDSHAKE), accept addr unconditionally.
+        # Once in 1-RTT, detect migration and validate the new path.
+        if self._state in (ConnectionState.INITIAL, ConnectionState.HANDSHAKE):
+            self._peer_addr = addr
+        elif addr != self._peer_addr and addr != self._migrating_addr:
+            if self._peer_disable_active_migration:
+                # Peer advertised disable_active_migration — ignore the address change
+                pass
+            else:
+                # Start path validation for the new address
+                self._migrating_addr = addr
+                self._send_path_challenge(addr)
+        # If addr matches _migrating_addr, we're already validating — keep processing
         if now > 0.0:
             self._last_activity = now
 
@@ -1007,10 +1025,44 @@ class QuicConnection:
         )
         self._one_rtt_pn += 1
 
+    def _send_path_challenge(self, addr: tuple[str, int]) -> None:
+        """Send PATH_CHALLENGE to validate a new peer address (RFC 9000 §8.2)."""
+        if not self._one_rtt_crypto or not self._peer_cid:
+            return
+        challenge_data = os.urandom(8)
+        self._pending_path_challenge = challenge_data
+        payload_buf = Buffer()
+        push_path_challenge(payload_buf, challenge_data)
+        plain_payload = payload_buf.data
+        pn = self._one_rtt_pn
+        header_buf = Buffer()
+        push_short_header(header_buf, self._peer_cid, pn)
+        plain_header = header_buf.data
+        encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
+        self._send_queue.append(encrypted)
+        self._application_space.on_packet_sent(
+            packet_number=pn,
+            sent_time=self._now,
+            sent_bytes=len(encrypted),
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentPathChallengeFrame(data=challenge_data),),
+        )
+        self._one_rtt_pn += 1
+
     def _handle_path_response(self, data: bytes, events: list[QuicEvent]) -> None:
-        """Handle incoming PATH_RESPONSE — validates pending path challenge."""
+        """Handle incoming PATH_RESPONSE — completes migration if challenge matches."""
         if self._pending_path_challenge is not None and data == self._pending_path_challenge:
+            old_addr = self._peer_addr
+            new_addr = self._migrating_addr
             self._pending_path_challenge = None
+            if new_addr is not None:
+                self._peer_addr = new_addr
+                self._migrating_addr = None
+                # Reset congestion state for new path (RFC 9000 §9.4)
+                self._cc = CongestionController()
+                self._rtt = RttEstimator()
+                events.append(ConnectionMigrated(old_addr=old_addr, new_addr=new_addr))
 
     def _queue_handshake_done(self) -> None:
         """Queue HANDSHAKE_DONE frame in a 1-RTT packet (RFC 9000 19.20)."""
