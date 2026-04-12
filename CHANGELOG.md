@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-04-12
+
+### Added
+
+- **Connection migration & CID retirement** (RFC 9000 §9) — detect peer address changes, validate new paths, retire connection IDs
+- **Retry packet support** (RFC 9000 §8.1) — stateless address validation with retry tokens and `RetryTokenHandler` contract
+
+### Fixed
+
+- Export `SessionTicket`, `NewSessionTicket`, and `ZeroRttPolicy` from top-level `zoomies` package
+
+### Changed
+
+- Refactor connection packet send helpers for clarity and reuse
+
+### Documentation
+
+- Fix stale API references and sync design doc statuses
+
+### Tests
+
+- Retry loopback integration tests and updated stale plans
+
 ## [0.3.1] - 2026-04-10
 
 ### Fixed
