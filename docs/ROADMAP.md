@@ -27,8 +27,8 @@
 - ~~QPACK dynamic table~~ **Done** — RFC 9204 encoder/decoder
 - ~~0-RTT early data~~ **Done** — PSK resumption with send/receive and anti-replay
 - ~~Retry packet generation~~ **Done** — server Retry send + token validation, client Retry handling, loopback integration tests
+- ~~Connection migration / CID retirement~~ **Done** — path validation (PATH_CHALLENGE/RESPONSE), migration detection, CID pool management, retire_prior_to advancement, disable_active_migration enforcement
 - Version negotiation
-- Connection migration / CID retirement
 
 **Target achieved:** Client and server mode with 0-RTT, QPACK dynamic table, and constant-time TLS verification.
 
