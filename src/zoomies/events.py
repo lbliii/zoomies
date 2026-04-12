@@ -101,6 +101,13 @@ class NewSessionTicket:
 
 
 @dataclass(frozen=True, slots=True)
+class RetryReceived:
+    """Server sent Retry — client will resend Initial with token."""
+
+    retry_source_cid: bytes
+
+
+@dataclass(frozen=True, slots=True)
 class H3HeadersReceived:
     """HTTP/3 headers received (e.g. request or response)."""
 
@@ -133,6 +140,7 @@ QuicEvent = (
     | ZeroRttAccepted
     | ZeroRttRejected
     | NewSessionTicket
+    | RetryReceived
 )
 
 # Union type for HTTP/3 events

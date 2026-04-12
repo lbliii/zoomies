@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
+    from zoomies.contracts.retry import RetryTokenHandler
     from zoomies.crypto.tls import SessionTicket
 
 
@@ -49,3 +50,4 @@ class QuicConfiguration:
     idle_timeout: float = 30.0
     zero_rtt_policy: ZeroRttPolicy | None = None
     session_ticket: SessionTicket | None = None
+    retry_token_handler: RetryTokenHandler | None = None

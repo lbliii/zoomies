@@ -22,6 +22,7 @@ from zoomies.events import (
     DecryptionFailed,
     HandshakeComplete,
     QuicEvent,
+    RetryReceived,
     StopSendingReceived,
     StreamDataReceived,
     StreamReset,
@@ -60,11 +61,13 @@ from zoomies.packet.builder import (
 from zoomies.packet.header import (
     PACKET_TYPE_HANDSHAKE,
     PACKET_TYPE_INITIAL,
+    PACKET_TYPE_RETRY,
     PACKET_TYPE_ZERO_RTT,
     LongHeader,
     ShortHeader,
     pull_quic_header,
 )
+from zoomies.packet.retry import encode_quic_retry, get_retry_integrity_tag
 from zoomies.primitives import StreamId
 from zoomies.recovery import (
     CongestionController,
@@ -179,6 +182,12 @@ class QuicConnection:
         self._address_validated = config.is_client
         # Session tickets for PSK resumption (server-side)
         self._session_tickets: list = []
+        # Retry state
+        self._original_destination_cid: bytes | None = None  # ODCID for Retry flow
+        self._retry_source_cid: bytes | None = None  # CID from Retry packet
+        self._retry_sent = False  # Server: have we sent a Retry?
+        self._retry_received = False  # Client: have we received a Retry?
+        self._client_hello_bytes: bytes | None = None  # Cached for Retry resend
         # Retransmission queues for lost frames
         self._crypto_retransmit: list[tuple[int, bytes]] = []  # (offset, data)
         self._handshake_done_pending = False
@@ -230,6 +239,7 @@ class QuicConnection:
             session_ticket=self._config.session_ticket,
         )
         client_hello = self._client_tls_ctx.build_client_hello()
+        self._client_hello_bytes = client_hello  # Cache for potential Retry resend
         self._queue_initial_client_hello(client_hello)
         # Set up 0-RTT crypto if we have a session ticket for early data
         if self._config.session_ticket is not None:
@@ -336,6 +346,8 @@ class QuicConnection:
                 self._handle_handshake(data, buf, header, events)
             elif header.packet_type == PACKET_TYPE_ZERO_RTT:
                 self._handle_0rtt(data, buf, header, events)
+            elif header.packet_type == PACKET_TYPE_RETRY:
+                self._handle_retry(header, events)
         elif isinstance(header, ShortHeader):
             self._handle_short(data, buf, header, events)
 
@@ -360,7 +372,23 @@ class QuicConnection:
         events: list[QuicEvent],
     ) -> None:
         """Server: handle Initial packet containing ClientHello."""
+        handler = self._config.retry_token_handler
+
         if self._state == ConnectionState.INITIAL:
+            # Retry flow: if handler is configured and no token, send Retry
+            if handler is not None and not header.token and not self._retry_sent:
+                self._send_retry(header)
+                return
+
+            # Retry flow: if handler is configured and token present, validate
+            if handler is not None and header.token:
+                odcid = handler.validate_token(header.token, self._peer_addr)
+                if odcid is None:
+                    # Invalid token — drop packet silently
+                    return
+                self._original_destination_cid = odcid
+                self._address_validated = True
+
             self._our_cid = header.destination_cid
             self._our_cids = {self._our_cid}
             self._sequence_to_cid = {0: self._our_cid}
@@ -394,6 +422,32 @@ class QuicConnection:
         except InvalidTag:
             events.append(DecryptionFailed(packet_type="initial"))
 
+    def _send_retry(self, header: LongHeader) -> None:
+        """Server: send Retry packet to validate client address."""
+        handler = self._config.retry_token_handler
+        if handler is None:
+            return
+
+        original_dcid = header.destination_cid
+        token = handler.generate_token(original_dcid, self._peer_addr)
+
+        # Generate a new CID for the Retry packet
+        retry_scid = os.urandom(8)
+        self._retry_source_cid = retry_scid
+        self._original_destination_cid = original_dcid
+
+        from zoomies.primitives.types import QUIC_VERSION_1
+
+        retry_packet = encode_quic_retry(
+            version=QUIC_VERSION_1,
+            source_cid=retry_scid,
+            destination_cid=header.source_cid,
+            original_destination_cid=original_dcid,
+            retry_token=token,
+        )
+        self._send_queue.append(retry_packet)
+        self._retry_sent = True
+
     def _handle_initial_client(
         self,
         data: bytes,
@@ -420,6 +474,100 @@ class QuicConnection:
             self._feed_crypto_to_tls(events, level="initial")
         except InvalidTag:
             events.append(DecryptionFailed(packet_type="initial"))
+
+    def _handle_retry(self, header: LongHeader, events: list[QuicEvent]) -> None:
+        """Client: handle Retry packet from server."""
+        if not self._is_client:
+            return
+        # RFC 9000 §17.2.5.2: client MUST accept only one Retry per connection
+        if self._retry_received:
+            return
+        if self._state != ConnectionState.INITIAL:
+            return
+
+        # Validate integrity tag (RFC 9001 §5.8)
+        # Reconstruct packet-without-tag from header fields
+        first_byte = 0xC0 | (3 << 4)
+        packet_without_tag = (
+            bytes([first_byte])
+            + header.version.to_bytes(4, "big")
+            + bytes([len(header.destination_cid)])
+            + header.destination_cid
+            + bytes([len(header.source_cid)])
+            + header.source_cid
+            + header.token
+        )
+        expected_tag = get_retry_integrity_tag(packet_without_tag, self._peer_cid, header.version)
+        if header.integrity_tag != expected_tag:
+            # Invalid integrity tag — drop silently
+            return
+
+        self._retry_received = True
+        # Store the original destination CID (what we sent in the first Initial)
+        self._original_destination_cid = self._peer_cid
+        # The Retry packet's source CID becomes our new destination CID
+        self._peer_cid = header.source_cid
+        self._retry_source_cid = header.source_cid
+
+        # Reset Initial crypto with new destination CID
+        self._initial_crypto = CryptoPair()
+        self._initial_crypto.setup_initial(cid=self._peer_cid, is_client=True)
+        self._initial_pn = 0
+        self._initial_recv_pn = 0
+        self._initial_ack_ranges = RangeSet()
+
+        # Discard 0-RTT state — Retry invalidates early data (RFC 9000 §8.1.4)
+        self._zero_rtt_crypto = None
+        self._zero_rtt_stream_queue = []
+
+        # Re-send Initial with the Retry token using cached ClientHello
+        if self._client_hello_bytes is not None:
+            self._queue_initial_client_hello_with_token(self._client_hello_bytes, header.token)
+
+        events.append(RetryReceived(retry_source_cid=header.source_cid))
+
+    def _queue_initial_client_hello_with_token(self, client_hello: bytes, token: bytes) -> None:
+        """Queue Initial packet with Retry token containing ClientHello."""
+        if not self._initial_crypto:
+            return
+        payload_buf = Buffer()
+        push_crypto_frame(payload_buf, CryptoFrame(offset=0, data=client_hello))
+        pn = self._initial_pn
+        # Measure header size with token
+        probe_buf = Buffer()
+        push_initial_packet_header(
+            probe_buf,
+            destination_cid=self._peer_cid,
+            source_cid=self._our_cid,
+            token=token,
+            payload_length=1200,
+        )
+        header_len = len(probe_buf.data)
+        min_payload = MTU - header_len - PN_SIZE - AEAD_TAG_SIZE
+        if len(payload_buf.data) < min_payload:
+            payload_buf.push_bytes(b"\x00" * (min_payload - len(payload_buf.data)))
+        plain_payload = payload_buf.data
+        header_buf = Buffer()
+        ciphertext_len = PN_SIZE + len(plain_payload) + AEAD_TAG_SIZE
+        push_initial_packet_header(
+            header_buf,
+            destination_cid=self._peer_cid,
+            source_cid=self._our_cid,
+            token=token,
+            payload_length=ciphertext_len,
+        )
+        plain_header = header_buf.data
+        encrypted = self._initial_crypto.encrypt_packet(plain_header, plain_payload, pn)
+        self._send_queue.append(encrypted)
+        self._initial_space.on_packet_sent(
+            packet_number=pn,
+            sent_time=self._now,
+            sent_bytes=len(encrypted),
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentCryptoFrame(offset=0, length=len(client_hello)),),
+        )
+        self._initial_pn += 1
 
     def _handle_0rtt(
         self, data: bytes, buf: Buffer, header: LongHeader, events: list[QuicEvent]
