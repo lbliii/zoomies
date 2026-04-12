@@ -163,8 +163,11 @@ class QuicConnection:
         self._handshake_crypto_recv: list[tuple[int, bytes]] = []
         self._handshake_crypto_fed = 0
         self._our_cids: set[bytes] = set()
-        self._sequence_to_cid: dict[int, bytes] = {}
+        self._our_seq_to_cid: dict[int, bytes] = {}
         self._next_cid_sequence = 0
+        # Peer CIDs received via NEW_CONNECTION_ID
+        self._peer_cids: dict[int, bytes] = {}  # seq → cid
+        self._active_connection_id_limit = 2  # RFC 9000 §18.2 minimum
         # Stream state for reassembly and offset tracking
         self._streams: dict[int, Stream] = {}
         # ACK tracking — received packet numbers per space
@@ -239,7 +242,7 @@ class QuicConnection:
             raise RuntimeError("connect() is only for client mode")
         self._our_cid = os.urandom(8)
         self._our_cids = {self._our_cid}
-        self._sequence_to_cid = {0: self._our_cid}
+        self._our_seq_to_cid = {0: self._our_cid}
         self._next_cid_sequence = 1
         # Client picks a random destination CID for the Initial packet
         self._peer_cid = os.urandom(8)
@@ -419,7 +422,7 @@ class QuicConnection:
 
             self._our_cid = header.destination_cid
             self._our_cids = {self._our_cid}
-            self._sequence_to_cid = {0: self._our_cid}
+            self._our_seq_to_cid = {0: self._our_cid}
             self._next_cid_sequence = 1
             self._peer_cid = header.source_cid
             self._initial_crypto = CryptoPair()
@@ -777,7 +780,7 @@ class QuicConnection:
             self._state = ConnectionState.ONE_RTT
             self._address_validated = True
             events.append(HandshakeComplete())
-            self._queue_new_connection_id(events)
+            self._issue_cid_pool(events)
             self._queue_handshake_done()
 
     def _feed_crypto_to_client_tls(self, data: bytes, events: list[QuicEvent]) -> None:
@@ -857,14 +860,19 @@ class QuicConnection:
                         bisect.insort(self._handshake_crypto_recv, (frame.offset, frame.data))
                 elif first == 0x18:
                     frame = pull_new_connection_id(buf)
-                    # Store the new CID for potential use
-                    self._sequence_to_cid[frame.sequence] = frame.connection_id
+                    self._peer_cids[frame.sequence] = frame.connection_id
+                    # Retire peer CIDs with sequence < retire_prior_to
+                    for seq in list(self._peer_cids):
+                        if seq < frame.retire_prior_to:
+                            del self._peer_cids[seq]
                 elif first == 0x19:
                     frame = pull_retire_connection_id(buf)
-                    cid = self._sequence_to_cid.pop(frame.sequence, None)
+                    cid = self._our_seq_to_cid.pop(frame.sequence, None)
                     if cid is not None:
                         self._our_cids.discard(cid)
                         events.append(ConnectionIdRetired(connection_id=cid))
+                        # Issue replacement CID to maintain pool
+                        self._queue_new_connection_id(events)
                 elif first == 0x1A:
                     frame = pull_path_challenge(buf)
                     self._queue_path_response(frame.data)
@@ -968,21 +976,25 @@ class QuicConnection:
                 # SentPingFrame: NOT retransmitted
                 # SentNewConnectionIdFrame: NOT retransmitted (idempotent)
 
-    def _queue_new_connection_id(self, events: list[QuicEvent]) -> None:
+    def _queue_new_connection_id(
+        self, events: list[QuicEvent], retire_prior_to: int = 0
+    ) -> None:
         """Queue 1-RTT packet with NEW_CONNECTION_ID for connection migration."""
         if not self._one_rtt_crypto or not self._peer_cid:
             return
         new_cid = os.urandom(8)
         sequence = self._next_cid_sequence
         self._next_cid_sequence += 1
-        self._sequence_to_cid[sequence] = new_cid
+        self._our_seq_to_cid[sequence] = new_cid
         self._our_cids.add(new_cid)
-        events.append(ConnectionIdIssued(connection_id=new_cid, retire_prior_to=0))
+        events.append(
+            ConnectionIdIssued(connection_id=new_cid, retire_prior_to=retire_prior_to)
+        )
         payload_buf = Buffer()
         push_new_connection_id(
             payload_buf,
             sequence=sequence,
-            retire_prior_to=0,
+            retire_prior_to=retire_prior_to,
             connection_id=new_cid,
         )
         plain_payload = payload_buf.data
@@ -1001,6 +1013,12 @@ class QuicConnection:
             frames=(SentNewConnectionIdFrame(sequence=sequence),),
         )
         self._one_rtt_pn += 1
+
+    def _issue_cid_pool(self, events: list[QuicEvent]) -> None:
+        """Issue CIDs up to active_connection_id_limit (RFC 9000 §5.1.1)."""
+        # _our_cid (seq 0) is always in the pool. Issue additional CIDs.
+        while len(self._our_cids) < self._active_connection_id_limit:
+            self._queue_new_connection_id(events)
 
     def _queue_path_response(self, challenge_data: bytes) -> None:
         """Queue PATH_RESPONSE echoing the challenge data (RFC 9000 §8.2.2)."""
@@ -1063,6 +1081,10 @@ class QuicConnection:
                 self._cc = CongestionController()
                 self._rtt = RttEstimator()
                 events.append(ConnectionMigrated(old_addr=old_addr, new_addr=new_addr))
+                # Issue new CID with advanced retire_prior_to (linkability prevention)
+                self._queue_new_connection_id(
+                    events, retire_prior_to=self._next_cid_sequence - 1
+                )
 
     def _queue_handshake_done(self) -> None:
         """Queue HANDSHAKE_DONE frame in a 1-RTT packet (RFC 9000 19.20)."""
