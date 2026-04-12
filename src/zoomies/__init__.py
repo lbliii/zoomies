@@ -38,6 +38,7 @@ Native to the b-stack (Pounce, Chirp); no b-stack deps. Usable anywhere. Built f
 **Status:** Pre-alpha. API stable for sans-I/O integration. See docs/design/architecture.md.
 """
 
+from zoomies.contracts.retry import RetryTokenHandler
 from zoomies.core import QuicConfiguration, QuicConnection
 from zoomies.core.configuration import ZeroRttPolicy
 from zoomies.crypto.tls import SessionTicket
@@ -49,6 +50,7 @@ from zoomies.events import (
     HandshakeComplete,
     NewSessionTicket,
     QuicEvent,
+    RetryReceived,
     StreamDataReceived,
     ZeroRttAccepted,
     ZeroRttRejected,
@@ -67,6 +69,8 @@ __all__ = [
     "QuicConfiguration",
     "QuicConnection",
     "QuicEvent",
+    "RetryReceived",
+    "RetryTokenHandler",
     "SessionTicket",
     "StreamDataReceived",
     "ZeroRttAccepted",
