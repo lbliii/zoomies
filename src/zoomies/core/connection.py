@@ -205,10 +205,10 @@ class QuicConnection:
         self._handshake_done_pending = False
         self._probe_needed = False
         # Path validation (RFC 9000 §9)
-        self._pending_path_responses: list[bytes] = []  # challenge data to echo back
         self._pending_path_challenge: bytes | None = None  # challenge we sent, awaiting response
         self._migrating_addr: tuple[str, int] | None = None  # addr being validated
         self._peer_disable_active_migration: bool = False  # peer's transport param
+        self._datagram_addr: tuple[str, int] = ("", 0)  # addr of current datagram
 
     @property
     def our_cid(self) -> bytes:
@@ -340,21 +340,11 @@ class QuicConnection:
         events.append(DatagramReceived(data=data, addr=addr))
         self._now = now
         self._bytes_received += len(data)
+        self._datagram_addr = addr  # stash for post-decrypt migration check
 
-        # Address change detection (RFC 9000 §9):
-        # During handshake (INITIAL/HANDSHAKE), accept addr unconditionally.
-        # Once in 1-RTT, detect migration and validate the new path.
+        # During handshake, accept addr unconditionally
         if self._state in (ConnectionState.INITIAL, ConnectionState.HANDSHAKE):
             self._peer_addr = addr
-        elif addr != self._peer_addr and addr != self._migrating_addr:
-            if self._peer_disable_active_migration:
-                # Peer advertised disable_active_migration — ignore the address change
-                pass
-            else:
-                # Start path validation for the new address
-                self._migrating_addr = addr
-                self._send_path_challenge(addr)
-        # If addr matches _migrating_addr, we're already validating — keep processing
         if now > 0.0:
             self._last_activity = now
 
@@ -655,7 +645,17 @@ class QuicConnection:
             self._one_rtt_recv_pn = pn + 1
             self._application_ack_ranges.add(pn)
             self._ack_needed_application = True
-            self._parse_payload_frames(plain_payload, events)
+            # Migration detection AFTER successful decryption (RFC 9000 §9):
+            # Only authenticated packets can trigger path validation.
+            addr = self._datagram_addr
+            if (
+                addr != self._peer_addr
+                and addr != self._migrating_addr
+                and not self._peer_disable_active_migration
+            ):
+                self._migrating_addr = addr
+                self._send_path_challenge(addr)
+            self._parse_payload_frames(plain_payload, events, datagram_addr=addr)
         except InvalidTag:
             events.append(DecryptionFailed(packet_type="1rtt"))
 
@@ -818,6 +818,7 @@ class QuicConnection:
         events: list[QuicEvent],
         *,
         is_0rtt: bool = False,
+        datagram_addr: tuple[str, int] | None = None,
         crypto_level: str = "initial",
     ) -> None:
         """Parse QUIC frames from decrypted payload; collect CRYPTO for TLS."""
@@ -878,7 +879,7 @@ class QuicConnection:
                     self._queue_path_response(frame.data)
                 elif first == 0x1B:
                     frame = pull_path_response(buf)
-                    self._handle_path_response(frame.data, events)
+                    self._handle_path_response(frame.data, events, datagram_addr)
                 elif first in (0x1C, 0x1D):
                     buf.pull_uint_var()  # consume frame type
                     frame = pull_connection_close(buf)
@@ -1064,11 +1065,20 @@ class QuicConnection:
         )
         self._one_rtt_pn += 1
 
-    def _handle_path_response(self, data: bytes, events: list[QuicEvent]) -> None:
-        """Handle incoming PATH_RESPONSE — completes migration if challenge matches."""
+    def _handle_path_response(
+        self, data: bytes, events: list[QuicEvent], datagram_addr: tuple[str, int] | None = None
+    ) -> None:
+        """Handle incoming PATH_RESPONSE — completes migration if challenge matches.
+
+        Only completes migration if the response arrived from the address being
+        validated (RFC 9000 §8.2.2), proving reachability on the new path.
+        """
         if self._pending_path_challenge is not None and data == self._pending_path_challenge:
             old_addr = self._peer_addr
             new_addr = self._migrating_addr
+            # Verify response came from the address we're validating
+            if datagram_addr is not None and new_addr is not None and datagram_addr != new_addr:
+                return  # response from wrong address — don't complete migration
             self._pending_path_challenge = None
             if new_addr is not None:
                 self._peer_addr = new_addr
