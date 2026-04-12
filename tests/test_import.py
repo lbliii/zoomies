@@ -5,7 +5,7 @@ def test_zoomies_imports() -> None:
     """Package imports and exposes __version__."""
     import zoomies
 
-    assert zoomies.__version__ == "0.3.1"
+    assert zoomies.__version__ == "0.3.2"
 
 
 def test_zoomies_events_module() -> None:
