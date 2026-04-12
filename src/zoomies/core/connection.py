@@ -273,6 +273,10 @@ class QuicConnection:
 
     def _queue_initial_client_hello(self, client_hello: bytes) -> None:
         """Queue Initial packet containing ClientHello CRYPTO frame."""
+        self._queue_initial_client_hello_packet(client_hello, token=b"")
+
+    def _queue_initial_client_hello_packet(self, client_hello: bytes, token: bytes) -> None:
+        """Queue an Initial packet containing the client's ClientHello."""
         if not self._initial_crypto:
             return
         payload_buf = Buffer()
@@ -285,7 +289,7 @@ class QuicConnection:
             probe_buf,
             destination_cid=self._peer_cid,
             source_cid=self._our_cid,
-            token=b"",
+            token=token,
             payload_length=1200,  # dummy — just for header size measurement
         )
         header_len = len(probe_buf.data)
@@ -300,7 +304,7 @@ class QuicConnection:
             header_buf,
             destination_cid=self._peer_cid,
             source_cid=self._our_cid,
-            token=b"",
+            token=token,
             payload_length=ciphertext_len,
         )
         plain_header = header_buf.data
@@ -549,46 +553,7 @@ class QuicConnection:
 
     def _queue_initial_client_hello_with_token(self, client_hello: bytes, token: bytes) -> None:
         """Queue Initial packet with Retry token containing ClientHello."""
-        if not self._initial_crypto:
-            return
-        payload_buf = Buffer()
-        push_crypto_frame(payload_buf, CryptoFrame(offset=0, data=client_hello))
-        pn = self._initial_pn
-        # Measure header size with token
-        probe_buf = Buffer()
-        push_initial_packet_header(
-            probe_buf,
-            destination_cid=self._peer_cid,
-            source_cid=self._our_cid,
-            token=token,
-            payload_length=1200,
-        )
-        header_len = len(probe_buf.data)
-        min_payload = MTU - header_len - PN_SIZE - AEAD_TAG_SIZE
-        if len(payload_buf.data) < min_payload:
-            payload_buf.push_bytes(b"\x00" * (min_payload - len(payload_buf.data)))
-        plain_payload = payload_buf.data
-        header_buf = Buffer()
-        ciphertext_len = PN_SIZE + len(plain_payload) + AEAD_TAG_SIZE
-        push_initial_packet_header(
-            header_buf,
-            destination_cid=self._peer_cid,
-            source_cid=self._our_cid,
-            token=token,
-            payload_length=ciphertext_len,
-        )
-        plain_header = header_buf.data
-        encrypted = self._initial_crypto.encrypt_packet(plain_header, plain_payload, pn)
-        self._send_queue.append(encrypted)
-        self._initial_space.on_packet_sent(
-            packet_number=pn,
-            sent_time=self._now,
-            sent_bytes=len(encrypted),
-            ack_eliciting=True,
-            in_flight=True,
-            frames=(SentCryptoFrame(offset=0, length=len(client_hello)),),
-        )
-        self._initial_pn += 1
+        self._queue_initial_client_hello_packet(client_hello, token)
 
     def _handle_0rtt(
         self, data: bytes, buf: Buffer, header: LongHeader, events: list[QuicEvent]
@@ -994,22 +959,10 @@ class QuicConnection:
             retire_prior_to=retire_prior_to,
             connection_id=new_cid,
         )
-        plain_payload = payload_buf.data
-        pn = self._one_rtt_pn
-        header_buf = Buffer()
-        push_short_header(header_buf, self._peer_cid, pn)
-        plain_header = header_buf.data
-        encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
-        self._send_queue.append(encrypted)
-        self._application_space.on_packet_sent(
-            packet_number=pn,
-            sent_time=self._now,
-            sent_bytes=len(encrypted),
-            ack_eliciting=True,
-            in_flight=True,
-            frames=(SentNewConnectionIdFrame(sequence=sequence),),
+        self._queue_one_rtt_control_packet(
+            payload_buf.data,
+            (SentNewConnectionIdFrame(sequence=sequence),),
         )
-        self._one_rtt_pn += 1
 
     def _issue_cid_pool(self, events: list[QuicEvent]) -> None:
         """Issue CIDs up to active_connection_id_limit (RFC 9000 §5.1.1)."""
@@ -1023,22 +976,10 @@ class QuicConnection:
             return
         payload_buf = Buffer()
         push_path_response(payload_buf, challenge_data)
-        plain_payload = payload_buf.data
-        pn = self._one_rtt_pn
-        header_buf = Buffer()
-        push_short_header(header_buf, self._peer_cid, pn)
-        plain_header = header_buf.data
-        encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
-        self._send_queue.append(encrypted)
-        self._application_space.on_packet_sent(
-            packet_number=pn,
-            sent_time=self._now,
-            sent_bytes=len(encrypted),
-            ack_eliciting=True,
-            in_flight=True,
-            frames=(SentPathResponseFrame(data=challenge_data),),
+        self._queue_one_rtt_control_packet(
+            payload_buf.data,
+            (SentPathResponseFrame(data=challenge_data),),
         )
-        self._one_rtt_pn += 1
 
     def _send_path_challenge(self, addr: tuple[str, int]) -> None:
         """Send PATH_CHALLENGE to validate a new peer address (RFC 9000 §8.2)."""
@@ -1048,22 +989,10 @@ class QuicConnection:
         self._pending_path_challenge = challenge_data
         payload_buf = Buffer()
         push_path_challenge(payload_buf, challenge_data)
-        plain_payload = payload_buf.data
-        pn = self._one_rtt_pn
-        header_buf = Buffer()
-        push_short_header(header_buf, self._peer_cid, pn)
-        plain_header = header_buf.data
-        encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
-        self._send_queue.append(encrypted)
-        self._application_space.on_packet_sent(
-            packet_number=pn,
-            sent_time=self._now,
-            sent_bytes=len(encrypted),
-            ack_eliciting=True,
-            in_flight=True,
-            frames=(SentPathChallengeFrame(data=challenge_data),),
+        self._queue_one_rtt_control_packet(
+            payload_buf.data,
+            (SentPathChallengeFrame(data=challenge_data),),
         )
-        self._one_rtt_pn += 1
 
     def _handle_path_response(
         self, data: bytes, events: list[QuicEvent], datagram_addr: tuple[str, int] | None = None
@@ -1096,22 +1025,21 @@ class QuicConnection:
             return
         payload_buf = Buffer()
         payload_buf.push_uint_var(HANDSHAKE_DONE_FRAME_TYPE)
-        plain_payload = payload_buf.data
-        pn = self._one_rtt_pn
-        header_buf = Buffer()
-        push_short_header(header_buf, self._peer_cid, pn)
-        plain_header = header_buf.data
-        encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
-        self._send_queue.append(encrypted)
-        self._application_space.on_packet_sent(
-            packet_number=pn,
-            sent_time=self._now,
-            sent_bytes=len(encrypted),
-            ack_eliciting=True,
-            in_flight=True,
-            frames=(SentHandshakeDoneFrame(),),
-        )
-        self._one_rtt_pn += 1
+        self._queue_one_rtt_control_packet(payload_buf.data, (SentHandshakeDoneFrame(),))
+
+    def _queue_one_rtt_control_packet(
+        self,
+        plain_payload: bytes,
+        frames: tuple[
+            SentHandshakeDoneFrame
+            | SentNewConnectionIdFrame
+            | SentPathChallengeFrame
+            | SentPathResponseFrame,
+            ...,
+        ],
+    ) -> None:
+        """Queue a single 1-RTT control packet and track it in application space."""
+        self._send_queue.append(self._encrypt_short_packet(plain_payload, frames))
 
     def _queue_initial_crypto_response(self, tls_data: bytes) -> None:
         """Queue Initial packet with CRYPTO frame (e.g., ServerHello)."""
