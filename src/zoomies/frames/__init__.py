@@ -1,4 +1,4 @@
-"""QUIC frames — ACK, CRYPTO, STREAM, PADDING, PING, CONNECTION_CLOSE (RFC 9000)."""
+"""QUIC frames — ACK, CRYPTO, STREAM, PADDING, PING, CONNECTION_CLOSE, PATH (RFC 9000)."""
 
 from zoomies.frames.ack import AckFrame, pull_ack_frame, push_ack_frame
 from zoomies.frames.common import (
@@ -13,6 +13,14 @@ from zoomies.frames.common import (
     push_ping_frame,
 )
 from zoomies.frames.crypto import CryptoFrame, pull_crypto_frame, push_crypto_frame
+from zoomies.frames.path import (
+    PathChallengeFrame,
+    PathResponseFrame,
+    pull_path_challenge,
+    pull_path_response,
+    push_path_challenge,
+    push_path_response,
+)
 from zoomies.frames.stream import (
     ResetStreamFrame,
     StopSendingFrame,
@@ -30,6 +38,8 @@ __all__ = [
     "ConnectionCloseFrame",
     "CryptoFrame",
     "PaddingFrame",
+    "PathChallengeFrame",
+    "PathResponseFrame",
     "PingFrame",
     "ResetStreamFrame",
     "StopSendingFrame",
@@ -38,6 +48,8 @@ __all__ = [
     "pull_connection_close",
     "pull_crypto_frame",
     "pull_padding_frame",
+    "pull_path_challenge",
+    "pull_path_response",
     "pull_ping_frame",
     "pull_reset_stream_frame",
     "pull_stop_sending_frame",
@@ -46,6 +58,8 @@ __all__ = [
     "push_connection_close",
     "push_crypto_frame",
     "push_padding_frame",
+    "push_path_challenge",
+    "push_path_response",
     "push_ping_frame",
     "push_reset_stream_frame",
     "push_stop_sending_frame",

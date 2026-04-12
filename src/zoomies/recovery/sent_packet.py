@@ -55,6 +55,20 @@ class SentPingFrame:
     """PING frame that was sent."""
 
 
+@dataclass(frozen=True, slots=True)
+class SentPathResponseFrame:
+    """PATH_RESPONSE frame that was sent — not retransmittable."""
+
+    data: bytes
+
+
+@dataclass(frozen=True, slots=True)
+class SentPathChallengeFrame:
+    """PATH_CHALLENGE frame that was sent."""
+
+    data: bytes
+
+
 SentFrame = (
     SentCryptoFrame
     | SentStreamFrame
@@ -62,6 +76,8 @@ SentFrame = (
     | SentHandshakeDoneFrame
     | SentNewConnectionIdFrame
     | SentPingFrame
+    | SentPathResponseFrame
+    | SentPathChallengeFrame
 )
 
 

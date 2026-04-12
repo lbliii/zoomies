@@ -44,6 +44,11 @@ from zoomies.frames.connection_id import (
     pull_retire_connection_id,
     push_new_connection_id,
 )
+from zoomies.frames.path import (
+    pull_path_challenge,
+    pull_path_response,
+    push_path_response,
+)
 from zoomies.frames.crypto import CryptoFrame, pull_crypto_frame, push_crypto_frame
 from zoomies.frames.stream import (
     StreamFrame,
@@ -78,6 +83,8 @@ from zoomies.recovery import (
     SentHandshakeDoneFrame,
     SentNewConnectionIdFrame,
     SentPacket,
+    SentPathChallengeFrame,
+    SentPathResponseFrame,
     SentPingFrame,
     SentStreamFrame,
     detect_lost_packets,
@@ -192,6 +199,9 @@ class QuicConnection:
         self._crypto_retransmit: list[tuple[int, bytes]] = []  # (offset, data)
         self._handshake_done_pending = False
         self._probe_needed = False
+        # Path validation (RFC 9000 §9)
+        self._pending_path_responses: list[bytes] = []  # challenge data to echo back
+        self._pending_path_challenge: bytes | None = None  # challenge we sent, awaiting response
 
     @property
     def our_cid(self) -> bytes:
@@ -837,6 +847,12 @@ class QuicConnection:
                     if cid is not None:
                         self._our_cids.discard(cid)
                         events.append(ConnectionIdRetired(connection_id=cid))
+                elif first == 0x1A:
+                    frame = pull_path_challenge(buf)
+                    self._queue_path_response(frame.data)
+                elif first == 0x1B:
+                    frame = pull_path_response(buf)
+                    self._handle_path_response(frame.data, events)
                 elif first in (0x1C, 0x1D):
                     buf.pull_uint_var()  # consume frame type
                     frame = pull_connection_close(buf)
@@ -967,6 +983,34 @@ class QuicConnection:
             frames=(SentNewConnectionIdFrame(sequence=sequence),),
         )
         self._one_rtt_pn += 1
+
+    def _queue_path_response(self, challenge_data: bytes) -> None:
+        """Queue PATH_RESPONSE echoing the challenge data (RFC 9000 §8.2.2)."""
+        if not self._one_rtt_crypto or not self._peer_cid:
+            return
+        payload_buf = Buffer()
+        push_path_response(payload_buf, challenge_data)
+        plain_payload = payload_buf.data
+        pn = self._one_rtt_pn
+        header_buf = Buffer()
+        push_short_header(header_buf, self._peer_cid, pn)
+        plain_header = header_buf.data
+        encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
+        self._send_queue.append(encrypted)
+        self._application_space.on_packet_sent(
+            packet_number=pn,
+            sent_time=self._now,
+            sent_bytes=len(encrypted),
+            ack_eliciting=True,
+            in_flight=True,
+            frames=(SentPathResponseFrame(data=challenge_data),),
+        )
+        self._one_rtt_pn += 1
+
+    def _handle_path_response(self, data: bytes, events: list[QuicEvent]) -> None:
+        """Handle incoming PATH_RESPONSE — validates pending path challenge."""
+        if self._pending_path_challenge is not None and data == self._pending_path_challenge:
+            self._pending_path_challenge = None
 
     def _queue_handshake_done(self) -> None:
         """Queue HANDSHAKE_DONE frame in a 1-RTT packet (RFC 9000 19.20)."""
