@@ -1381,7 +1381,12 @@ class QuicConnection:
         self,
         plain_payload: bytes,
         frames: tuple[
-            SentStreamFrame | SentHandshakeDoneFrame | SentNewConnectionIdFrame | SentPingFrame,
+            SentStreamFrame
+            | SentHandshakeDoneFrame
+            | SentNewConnectionIdFrame
+            | SentPingFrame
+            | SentPathChallengeFrame
+            | SentPathResponseFrame,
             ...,
         ] = (),
     ) -> bytes:
