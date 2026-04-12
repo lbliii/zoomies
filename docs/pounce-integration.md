@@ -6,8 +6,8 @@ Zoomies is framework-agnostic. This doc describes how Pounce integrates with Zoo
 
 | Zoomies | Pounce Expectation |
 |---------|--------------------|
-| `QuicConnection.datagram_received(data, addr)` | Feed UDP datagrams in |
-| `QuicConnection.send_datagrams()` | `transmit()` — flush QUIC packets |
+| `QuicConnection.datagram_received(data, addr, now=)` | Feed UDP datagrams in |
+| `QuicConnection.send_datagrams(now=)` | `transmit()` — flush QUIC packets |
 | `H3Connection(quic_conn)` | `H3Connection` with sender |
 | `H3Connection.handle_event(QuicEvent)` | Forward `StreamDataReceived` |
 | `H3Connection.send_headers(stream_id, headers, end_stream)` | Response headers |

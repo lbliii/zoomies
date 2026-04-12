@@ -17,37 +17,53 @@ conn = QuicConnection(config)
 
 ## Methods
 
+### connect
+
+Generate the Initial packet with ClientHello. Client mode only — call once after construction.
+
+```python
+conn.connect()
+```
+
 ### datagram_received
 
 Feed a UDP datagram into the connection. Returns a list of events.
 
 ```python
-events: list[QuicEvent] = conn.datagram_received(data: bytes, addr: tuple)
+events: list[QuicEvent] = conn.datagram_received(data, addr, now=0.0)
 ```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `data` | `bytes` | Raw UDP payload |
+| `addr` | `tuple[str, int]` | Source address `(host, port)` |
+| `now` | `float` | Current time (default `0.0`) |
 
 ### send_datagrams
 
 Get outbound datagrams that the connection wants to send.
 
 ```python
-datagrams: list[bytes] = conn.send_datagrams()
+datagrams: list[bytes] = conn.send_datagrams(now=0.0)
 ```
 
-### get_next_stream_id
-
-Allocate the next available stream ID.
-
-```python
-stream_id: int = conn.get_next_stream_id()
-```
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `now` | `float` | Current time (default `0.0`) |
 
 ### send_stream_data
 
-Queue data for transmission on a stream.
+Queue data for transmission on a stream. Stream IDs follow RFC 9000 §2.1: client-initiated bidirectional streams use IDs 0, 4, 8, 12, …
 
 ```python
-conn.send_stream_data(stream_id: int, data: bytes, end_stream: bool = False)
+conn.send_stream_data(stream_id, data, end_stream=False)
 ```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `stream_id` | `int` | QUIC stream identifier |
+| `data` | `bytes` | Payload to send |
+| `end_stream` | `bool` | Set `True` to send FIN (default `False`) |
 
 ### get_timer
 
@@ -62,13 +78,22 @@ timeout: float | None = conn.get_timer()
 Process a timer expiry. Returns events (e.g., retransmission, PTO probe).
 
 ```python
-events: list[QuicEvent] = conn.handle_timer()
+events: list[QuicEvent] = conn.handle_timer(now)
 ```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `now` | `float` | Current time |
 
 ### close
 
-Initiate connection close with an optional error code.
+Initiate graceful connection close.
 
 ```python
-conn.close(error_code: int = 0, reason_phrase: str = "")
+conn.close(error_code=0, reason="")
 ```
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `error_code` | `int` | Transport or application error code (default `0`) |
+| `reason` | `str` | Human-readable reason phrase (default `""`) |

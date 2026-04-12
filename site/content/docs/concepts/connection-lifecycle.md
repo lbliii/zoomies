@@ -81,10 +81,11 @@ The client receives either a `ZeroRttAccepted` or `ZeroRttRejected` event. On re
 
 QUIC multiplexes data over streams within a single connection. Each stream is independent — no head-of-line blocking.
 
+Stream IDs follow RFC 9000 §2.1. Client-initiated bidirectional streams use IDs 0, 4, 8, 12, … Server-initiated use 1, 5, 9, 13, …
+
 ```python
-# Open a stream and send data
-stream_id = conn.get_next_stream_id()
-conn.send_stream_data(stream_id, b"hello")
+# Open a client-initiated bidirectional stream
+conn.send_stream_data(0, b"hello")
 
 # Receive stream data via events
 case StreamDataReceived(stream_id=sid, data=data, end_stream=fin):

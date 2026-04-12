@@ -26,6 +26,7 @@ Emitted when ordered stream data is available.
 | `stream_id` | `int` | QUIC stream identifier |
 | `data` | `bytes` | Reassembled payload |
 | `end_stream` | `bool` | `True` if FIN bit set |
+| `is_0rtt` | `bool` | `True` if received via 0-RTT early data |
 
 ### StreamReset
 
@@ -62,24 +63,75 @@ Emitted for QUIC DATAGRAM frames (unreliable delivery).
 | Field | Type | Description |
 |-------|------|-------------|
 | `data` | `bytes` | Datagram payload |
+| `addr` | `tuple[str, int]` | Source address |
+
+### ConnectionIdIssued
+
+Emitted when a new connection ID is issued to the peer.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `connection_id` | `bytes` | The new connection ID |
+| `retire_prior_to` | `int` | Peer should retire CIDs below this sequence number |
+
+### ConnectionIdRetired
+
+Emitted when a connection ID is retired.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `connection_id` | `bytes` | The retired connection ID |
+
+### DecryptionFailed
+
+Emitted when a packet cannot be decrypted (informational — not necessarily an error).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `packet_type` | `str` | Type of the undecryptable packet |
 
 ### ZeroRttAccepted
 
-Emitted on the client when the server accepts 0-RTT early data. Application data sent before the handshake completed was processed by the server.
+Emitted on the client when the server accepts 0-RTT early data.
 
 ```python
 @dataclass(frozen=True)
-class ZeroRttAccepted(QuicEvent): ...
+class ZeroRttAccepted: ...
 ```
 
 ### ZeroRttRejected
 
-Emitted on the client when the server rejects 0-RTT early data. Zoomies automatically resends affected streams as 1-RTT data — no application action required, but you may want to log or adjust behavior.
+Emitted on the client when the server rejects 0-RTT early data. Zoomies automatically resends affected streams as 1-RTT — no application action required.
 
 ```python
 @dataclass(frozen=True)
-class ZeroRttRejected(QuicEvent): ...
+class ZeroRttRejected: ...
 ```
+
+### NewSessionTicket
+
+Emitted when the server issues a session ticket. Store the ticket for 0-RTT resumption on the next connection.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ticket` | `SessionTicket` | The session ticket to store |
+
+### RetryReceived
+
+Emitted on the client when a Retry packet is received from the server (stateless address validation).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `retry_source_cid` | `bytes` | Source connection ID from the Retry packet |
+
+### ConnectionMigrated
+
+Emitted when a peer migrates to a new network address (RFC 9000 §9).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `old_addr` | `tuple[str, int]` | Previous peer address |
+| `new_addr` | `tuple[str, int]` | New peer address |
 
 ## HTTP/3 Events
 
@@ -102,3 +154,4 @@ Emitted when HTTP/3 body data arrives.
 |-------|------|-------------|
 | `data` | `bytes` | Body payload |
 | `stream_id` | `int` | H3 stream identifier |
+| `end_stream` | `bool` | `True` if this is the final DATA frame |

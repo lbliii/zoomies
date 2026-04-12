@@ -1,7 +1,8 @@
 # Epic: Connection Migration & CID Retirement — Mobile-Ready QUIC
 
-**Status**: Draft
+**Status**: Complete
 **Created**: 2026-04-12
+**Completed**: 2026-04-12
 **Target**: 0.3.x (Beta — Interoperable)
 **Estimated Effort**: 18–28 hours
 **Dependencies**: None (builds on existing frame/CID infrastructure)

@@ -1,6 +1,6 @@
 # Epic: QPACK Dynamic Table — Wire-Efficient Header Compression
 
-**Status**: Draft
+**Status**: Complete
 **Created**: 2026-04-09
 **Target**: 0.3.x (Beta)
 **Estimated Effort**: 18–28 hours

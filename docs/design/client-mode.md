@@ -1,5 +1,7 @@
 # Client Mode Design
 
+**Status**: Complete
+
 Design document for adding QUIC client-side connection support to Zoomies.
 
 ## Overview
