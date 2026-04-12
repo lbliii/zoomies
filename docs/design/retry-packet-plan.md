@@ -1,8 +1,9 @@
 # Epic: Retry Packets — Stateless Address Validation
 
-**Status**: Draft
+**Status**: Complete
 **Created**: 2026-04-12
-**Target**: 0.4.0
+**Completed**: 2026-04-12
+**Target**: 0.3.x
 **Estimated Effort**: 12–18h
 **Dependencies**: None (all primitives already exist)
 **Source**: Codebase analysis + roadmap item (ROADMAP.md line 29)
@@ -84,13 +85,13 @@ class RetryReceived(QuicEvent):
 
 ## Sprint Structure
 
-| Sprint | Focus | Effort | Risk | Ships Independently? |
-|--------|-------|--------|------|---------------------|
-| 0 | Design: token protocol + ODCID tracking | 2h | Low | Yes (design doc only) |
-| 1 | Server-side Retry send | 4h | Medium | Yes (server can issue Retry) |
-| 2 | Server-side token validation + ODCID plumbing | 4h | Medium | Yes (full server Retry) |
-| 3 | Client-side Retry handling | 3h | Low | Yes (full client + server) |
-| 4 | Loopback integration test + docs | 3h | Low | Yes (end-to-end proven) |
+| Sprint | Focus | Effort | Risk | Ships Independently? | Status |
+|--------|-------|--------|------|---------------------|--------|
+| 0 | Design: token protocol + ODCID tracking | 2h | Low | Yes (design doc only) | **Done** |
+| 1 | Server-side Retry send | 4h | Medium | Yes (server can issue Retry) | **Done** |
+| 2 | Server-side token validation + ODCID plumbing | 4h | Medium | Yes (full server Retry) | **Done** |
+| 3 | Client-side Retry handling | 3h | Low | Yes (full client + server) | **Done** |
+| 4 | Loopback integration test + docs | 3h | Low | Yes (end-to-end proven) | **Done** |
 
 ---
 
@@ -326,4 +327,5 @@ Export `RetryTokenHandler`, `RetryReceived` from `zoomies.__init__`.
 
 ## Changelog
 
+- 2026-04-12: Sprints 0-4 complete — loopback integration tests added, docs updated
 - 2026-04-12: Initial draft from codebase analysis

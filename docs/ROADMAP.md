@@ -26,7 +26,7 @@
 - ~~Client mode~~ **Done** — client-side QUIC + HTTP/3 with loopback tests
 - ~~QPACK dynamic table~~ **Done** — RFC 9204 encoder/decoder
 - ~~0-RTT early data~~ **Done** — PSK resumption with send/receive and anti-replay
-- Retry packet generation
+- ~~Retry packet generation~~ **Done** — server Retry send + token validation, client Retry handling, loopback integration tests
 - Version negotiation
 - Connection migration / CID retirement
 
