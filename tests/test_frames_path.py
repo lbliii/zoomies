@@ -8,7 +8,6 @@ from zoomies.encoding import Buffer
 from zoomies.frames.path import (
     FRAME_PATH_CHALLENGE,
     FRAME_PATH_RESPONSE,
-    PATH_DATA_LEN,
     PathChallengeFrame,
     PathResponseFrame,
     pull_path_challenge,

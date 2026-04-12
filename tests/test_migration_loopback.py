@@ -11,7 +11,6 @@ from zoomies import QuicConfiguration, QuicConnection
 from zoomies.events import (
     ConnectionIdIssued,
     ConnectionMigrated,
-    HandshakeComplete,
     StreamDataReceived,
 )
 
@@ -196,5 +195,4 @@ class TestDisableActiveMigration:
 
         # Data should still be processed (packet is valid, just addr is ignored)
         # No PATH_CHALLENGE sent
-        server_datagrams = server.send_datagrams()
-        # May have ACKs but no PATH_CHALLENGE
+        server.send_datagrams()  # drain queue (may have ACKs but no PATH_CHALLENGE)

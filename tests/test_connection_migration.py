@@ -1,17 +1,8 @@
 """Connection migration detection and path validation tests (RFC 9000 §9)."""
 
-import os
-
-import pytest
-
 from tests.utils import load
 from zoomies import QuicConfiguration, QuicConnection
-from zoomies.events import (
-    ConnectionMigrated,
-    DatagramReceived,
-    HandshakeComplete,
-    StreamDataReceived,
-)
+from zoomies.events import ConnectionMigrated
 
 CERT = load("fixtures/ssl_cert.pem")
 KEY = load("fixtures/ssl_key.pem")
@@ -25,7 +16,9 @@ def _make_client_server() -> tuple[QuicConnection, QuicConnection]:
     return QuicConnection(client_config), QuicConnection(server_config)
 
 
-def _transfer(sender: QuicConnection, receiver: QuicConnection, addr: tuple[str, int] = ADDR) -> list:
+def _transfer(
+    sender: QuicConnection, receiver: QuicConnection, addr: tuple[str, int] = ADDR
+) -> list:
     events = []
     for dg in sender.send_datagrams():
         events.extend(receiver.datagram_received(dg, addr))

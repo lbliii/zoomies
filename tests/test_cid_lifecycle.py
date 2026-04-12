@@ -20,7 +20,9 @@ def _make_client_server() -> tuple[QuicConnection, QuicConnection]:
     return QuicConnection(client_config), QuicConnection(server_config)
 
 
-def _transfer(sender: QuicConnection, receiver: QuicConnection, addr: tuple[str, int] = ADDR) -> list:
+def _transfer(
+    sender: QuicConnection, receiver: QuicConnection, addr: tuple[str, int] = ADDR
+) -> list:
     events = []
     for dg in sender.send_datagrams():
         events.extend(receiver.datagram_received(dg, addr))
@@ -62,12 +64,7 @@ class TestCidPool:
         client.connect()
         _transfer(client, server)
         # Server's response to client includes handshake + CID issuance
-        events = _transfer(server, client)
-        # Check client received NEW_CONNECTION_ID from server
-        issued = [e for e in events if isinstance(e, ConnectionIdIssued)]
-        # Client doesn't emit ConnectionIdIssued — server does during handshake.
-        # The events from _transfer(server, client) are CLIENT-side events.
-        # Let's check server side instead.
+        _transfer(server, client)
         _transfer(client, server)
         _transfer(server, client)
         # Server's _our_cids should have pool
@@ -78,17 +75,14 @@ class TestCidPool:
         client, server = _make_client_server()
         _handshake(client, server)
 
-        initial_cid_count = len(server._our_cids)
         initial_seq = server._next_cid_sequence
 
         # Simulate peer retiring a CID by removing one
         if server._our_seq_to_cid:
             retired_seq = min(server._our_seq_to_cid.keys())
-            retired_cid = server._our_seq_to_cid[retired_seq]
 
             # Build a RETIRE_CONNECTION_ID frame
             from zoomies.encoding import Buffer
-            from zoomies.frames.connection_id import push_new_connection_id
 
             buf = Buffer()
             buf.push_uint8(0x19)  # RETIRE_CONNECTION_ID

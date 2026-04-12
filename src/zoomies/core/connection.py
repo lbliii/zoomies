@@ -45,13 +45,13 @@ from zoomies.frames.connection_id import (
     pull_retire_connection_id,
     push_new_connection_id,
 )
+from zoomies.frames.crypto import CryptoFrame, pull_crypto_frame, push_crypto_frame
 from zoomies.frames.path import (
     pull_path_challenge,
     pull_path_response,
     push_path_challenge,
     push_path_response,
 )
-from zoomies.frames.crypto import CryptoFrame, pull_crypto_frame, push_crypto_frame
 from zoomies.frames.stream import (
     StreamFrame,
     pull_reset_stream_frame,
