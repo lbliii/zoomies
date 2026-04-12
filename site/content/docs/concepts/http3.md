@@ -38,19 +38,31 @@ The dynamic table is negotiated automatically via HTTP/3 SETTINGS. Encoder and d
 
 ## H3Connection
 
+`H3Connection` wraps a `QuicConnection` (passed as `sender`) so it can emit stream data directly.
+
 ```python
 from zoomies.h3 import H3Connection, H3HeadersReceived, H3DataReceived
 
-h3 = H3Connection(is_client=False)
+h3 = H3Connection(sender=quic_conn)
 
-# Feed QUIC events into H3
-for h3_event in h3.handle_event(quic_event):
-    match h3_event:
-        case H3HeadersReceived(headers=hdrs, stream_id=sid):
-            ...
-        case H3DataReceived(data=data, stream_id=sid):
-            ...
+# QUIC events that carry stream data produce H3 events
+match quic_event:
+    case StreamDataReceived(stream_id=sid, data=data, end_stream=fin):
+        for h3_event in h3.handle_event(quic_event):
+            match h3_event:
+                case H3HeadersReceived(headers=hdrs, stream_id=sid):
+                    ...
+                case H3DataReceived(data=body, stream_id=sid):
+                    ...
 ```
+
+Optional keyword arguments control QPACK dynamic table capacity:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `sender` | `H3StreamSender \| None` | `None` | Underlying QUIC connection |
+| `qpack_max_table_capacity` | `int` | `0` | Dynamic table size limit (bytes) |
+| `qpack_blocked_streams` | `int` | `0` | Max streams blocked on decoder |
 
 ## Integration with Pounce
 

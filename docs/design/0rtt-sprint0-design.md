@@ -1,6 +1,6 @@
 # Sprint 0: 0-RTT Design — PSK Key Schedule, Anti-Replay, Rejection Recovery
 
-**Status**: Draft
+**Status**: Complete
 **Created**: 2026-04-10
 **Parent**: [0rtt-early-data-plan.md](0rtt-early-data-plan.md)
 

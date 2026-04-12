@@ -19,14 +19,18 @@ config = QuicConfiguration(
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `certificate` | `bytes \| None` | `None` | PEM-encoded certificate (required for server) |
-| `private_key` | `bytes \| None` | `None` | PEM-encoded private key (required for server) |
 | `is_client` | `bool` | `False` | Client or server role |
-| `alpn_protocols` | `list[str]` | `["h3"]` | ALPN protocol negotiation list |
-| `max_stream_data` | `int` | `1048576` | Per-stream flow control limit (bytes) |
+| `certificate` | `bytes` | `b""` | PEM-encoded certificate (required for server) |
+| `private_key` | `bytes` | `b""` | PEM-encoded private key (required for server) |
+| `ca_certs` | `bytes \| None` | `None` | PEM-encoded CA bundle for peer verification |
+| `verify_mode` | `bool` | `True` | Verify the peer's certificate chain |
+| `server_name` | `str \| None` | `None` | SNI hostname (client only) |
+| `max_data` | `int` | `0` | Connection-level flow control limit (bytes) |
+| `max_stream_data` | `int` | `0` | Per-stream flow control limit (bytes) |
 | `idle_timeout` | `float` | `30.0` | Connection idle timeout (seconds) |
 | `session_ticket` | `SessionTicket \| None` | `None` | Stored session ticket for 0-RTT resumption (client only) |
 | `zero_rtt_policy` | `ZeroRttPolicy \| None` | `None` | Replay protection policy for 0-RTT data (server only) |
+| `retry_token_handler` | `RetryTokenHandler \| None` | `None` | Token handler for stateless address validation (server only) |
 
 ### ZeroRttPolicy
 
@@ -51,9 +55,12 @@ from zoomies.crypto.tls import SessionTicket
 |-------|------|-------------|
 | `ticket` | `bytes` | Opaque ticket data |
 | `resumption_secret` | `bytes` | PSK derived from the original handshake |
-| `max_early_data` | `int` | Maximum 0-RTT data size (bytes) |
+| `max_early_data` | `int` | Maximum 0-RTT data size (default `0xFFFFFFFF`) |
 | `cipher_suite` | `int` | TLS cipher suite identifier |
-| `lifetime` | `int` | Ticket validity in seconds (default 7200) |
+| `timestamp` | `float` | When the ticket was issued (default `0.0`) |
+| `lifetime` | `int` | Ticket validity in seconds (default `7200`) |
+| `age_add` | `int` | Obfuscated ticket age addend (default `0`) |
+| `nonce` | `bytes` | Ticket nonce (default `b""`) |
 
 ## Server configuration
 
@@ -69,5 +76,8 @@ config = QuicConfiguration(certificate=cert, private_key=key)
 ## Client configuration
 
 ```python
-config = QuicConfiguration(is_client=True)
+config = QuicConfiguration(
+    is_client=True,
+    server_name="example.com",
+)
 ```

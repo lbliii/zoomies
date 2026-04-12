@@ -3,7 +3,7 @@
 **Status**: Complete
 **Created**: 2026-04-10
 **Completed**: 2026-04-10
-**Target**: 0.4.0
+**Target**: 0.3.x
 **Estimated Effort**: 40–60 hours
 **Dependencies**: None (all prerequisites exist in 0.2.0)
 **Source**: Codebase analysis of crypto, connection, packet, recovery, events, and H3 layers
