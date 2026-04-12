@@ -11,7 +11,7 @@ Phased plan for implementing the QUIC/HTTP3 library. **See [primitives-first.md]
 | 3. Streams | Done | Stream state, frame parsing |
 | 4. Connection | Done | Initial, Handshake, Short header; CRYPTO, stream flush |
 | 5. H3/QPACK | Done | H3Connection, QPACK static table |
-| 6. Recovery | Not started | Congestion, RTT (optional) |
+| 6. Recovery | Done | Loss detection, NewReno congestion, RTT estimation, PTO probing |
 
 ---
 
@@ -45,32 +45,44 @@ Phased plan for implementing the QUIC/HTTP3 library. **See [primitives-first.md]
 
 ---
 
-## Module Layout (Target)
+## Module Layout (Current)
 
 ```
 src/zoomies/
-├── __init__.py
-├── events.py           # QuicEvent, H3Event, etc.
+├── __init__.py          # Public API exports
+├── events.py            # QuicEvent, H3Event, etc.
 ├── py.typed
-├── core/               # Layer 1: Packet, Crypto, Stream
-│   ├── __init__.py
-│   ├── buffer.py       # Minimal read/write buffer (no C)
-│   ├── packet.py       # Decode/encode QUIC packets
-│   ├── packet_builder.py
-│   ├── rangeset.py     # ACK ranges
-│   ├── retry.py        # Retry integrity tag
-│   ├── quic_crypto.py  # QUIC AEAD via cryptography
-│   ├── tls.py          # TLS 1.3 via cryptography (or thin wrapper)
-│   ├── stream.py       # Stream receive/send state
-│   ├── configuration.py
-│   └── connection.py   # Connection state machine (large)
-├── recovery/           # Layer 1.5: Congestion (can defer)
-│   ├── __init__.py
-│   └── ...
-└── h3/                 # Layer 3: HTTP/3
-    ├── __init__.py
-    ├── connection.py
-    └── qpack.py        # QPACK encode/decode
+├── core/                # Connection + stream state
+│   ├── connection.py    # QuicConnection state machine
+│   ├── configuration.py # QuicConfiguration, ZeroRttPolicy
+│   ├── stream.py        # Stream receive/send state
+│   └── protocols.py     # Protocol type definitions
+├── crypto/              # TLS 1.3 and QUIC AEAD
+│   ├── tls.py           # TLS 1.3 handshake, SessionTicket, PSK
+│   ├── quic_crypto.py   # QUIC AEAD encryption/decryption
+│   ├── protocol.py      # Crypto protocol definitions
+│   └── _hkdf.py         # HKDF key derivation
+├── packet/              # Packet encode/decode
+│   ├── header.py        # Packet header structures
+│   ├── builder.py       # Packet construction
+│   ├── retry.py         # Retry packet generation + integrity tag
+│   ├── transport_params.py
+│   └── rangeset.py      # ACK range utilities
+├── frames/              # QUIC frame type definitions
+├── primitives/          # Constants (QUIC_VERSION_1), varint encoding
+├── encoding/            # Buffer class, byte utilities
+├── contracts/           # Crypto key contracts, RetryTokenHandler
+├── recovery/            # Loss detection + congestion control
+│   ├── loss_detection.py
+│   ├── congestion.py    # NewReno
+│   ├── rtt.py           # RTT estimation (EWMA)
+│   ├── packet_space.py  # Per-space tracking
+│   └── sent_packet.py   # SentPacket registry
+└── h3/                  # HTTP/3
+    ├── connection.py    # H3Connection
+    ├── qpack.py         # QPACK encoder/decoder
+    ├── dynamic_table.py # Dynamic table with eviction
+    └── qpack_instructions.py
 ```
 
 ---

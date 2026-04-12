@@ -12,6 +12,8 @@ from zoomies.recovery.sent_packet import (
     SentHandshakeDoneFrame,
     SentNewConnectionIdFrame,
     SentPacket,
+    SentPathChallengeFrame,
+    SentPathResponseFrame,
     SentPingFrame,
     SentStreamFrame,
 )
@@ -27,6 +29,8 @@ __all__ = [
     "SentHandshakeDoneFrame",
     "SentNewConnectionIdFrame",
     "SentPacket",
+    "SentPathChallengeFrame",
+    "SentPathResponseFrame",
     "SentPingFrame",
     "SentStreamFrame",
     "detect_lost_packets",
