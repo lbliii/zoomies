@@ -187,7 +187,9 @@ def demo_timer_loop() -> None:
     # --- Set up client and server ---
     server_config = QuicConfiguration(certificate=cert, private_key=key)
     client_config = QuicConfiguration(
-        is_client=True, verify_mode=False, ca_certs=None  # loopback demo
+        is_client=True,
+        verify_mode=False,
+        ca_certs=None,  # loopback demo
     )
 
     server = QuicConnection(server_config)

@@ -990,12 +990,12 @@ class QuicConnection:
                         events.append(
                             PacketDropped(reason=f"unknown_frame_skipped:0x{unknown_type:x}")
                         )
-                    except (ValueError, BufferReadError):
+                    except ValueError, BufferReadError:
                         events.append(
                             PacketDropped(reason=f"unknown_frame_no_length:0x{unknown_type:x}")
                         )
                         break
-            except (ValueError, BufferReadError):
+            except ValueError, BufferReadError:
                 break
 
     def _process_ack(self, ack: AckFrame) -> None:

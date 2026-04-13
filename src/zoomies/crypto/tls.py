@@ -433,7 +433,7 @@ class QuicTlsContext:
                     )
                 else:
                     break
-            except (ValueError, BufferReadError):
+            except ValueError, BufferReadError:
                 if self._state == TlsHandshakeState.START:
                     self._state = TlsHandshakeState.CLIENT_HELLO_RECEIVED
                 else:
@@ -1153,7 +1153,7 @@ class QuicClientTlsContext:
                 )
                 verified = True
                 break
-            except (InvalidSignature, ValueError):
+            except InvalidSignature, ValueError:
                 continue
         if not verified:
             raise ValueError("Server certificate verification failed")
