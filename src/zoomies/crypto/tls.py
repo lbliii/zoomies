@@ -19,6 +19,11 @@ from cryptography.hazmat.primitives.serialization import Encoding
 from zoomies.crypto._hkdf import hkdf_expand_label, hkdf_extract
 from zoomies.encoding import Buffer
 from zoomies.encoding.buffer import BufferReadError
+from zoomies.packet.transport_params import (
+    QuicTransportParameters,
+    pull_quic_transport_parameters,
+    push_quic_transport_parameters,
+)
 
 # TLS 1.3
 TLS_VERSION_1_2 = 0x0303
@@ -86,6 +91,7 @@ class TlsHandshakeResult:
     early_data_accepted: bool = False
     psk_ticket_data: bytes | None = None
     psk_obfuscated_age: int = 0
+    peer_transport_params: QuicTransportParameters | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -236,17 +242,21 @@ def _build_server_hello(
     return buf.data
 
 
-def _build_encrypted_extensions(*, early_data: bool = False) -> bytes:
+def _build_encrypted_extensions(
+    *, early_data: bool = False, quic_transport_params: bytes | None = None
+) -> bytes:
     """Build EncryptedExtensions, optionally including early_data acceptance."""
     buf = Buffer()
     buf.push_uint8(HANDSHAKE_ENCRYPTED_EXTENSIONS)
+    ext_buf = Buffer()
     if early_data:
-        ext_buf = Buffer()
         ext_buf.push_uint16(EXT_EARLY_DATA)
         ext_buf.push_uint16(0)  # empty extension value = accepted
-        _push_block(buf, 3, ext_buf.data)
-    else:
-        _push_block(buf, 3, b"")
+    if quic_transport_params is not None:
+        ext_buf.push_uint16(QUIC_TP_EXT_TYPE)
+        ext_buf.push_uint16(len(quic_transport_params))
+        ext_buf.push_bytes(quic_transport_params)
+    _push_block(buf, 3, ext_buf.data)
     return buf.data
 
 
@@ -335,9 +345,17 @@ def _parse_new_session_ticket(data: bytes) -> tuple[int, int, bytes, bytes, int]
 class QuicTlsContext:
     """TLS 1.3 context for QUIC server handshake."""
 
-    def __init__(self, *, certificate: bytes, private_key: bytes) -> None:
+    def __init__(
+        self,
+        *,
+        certificate: bytes,
+        private_key: bytes,
+        quic_transport_params: bytes | None = None,
+    ) -> None:
         self._cert = x509.load_pem_x509_certificate(certificate)
         self._key = serialization.load_pem_private_key(private_key, password=None)
+        self._quic_transport_params = quic_transport_params
+        self._peer_transport_params: QuicTransportParameters | None = None
         self._state = TlsHandshakeState.START
         self._receive_buffer = b""
         self._handshake_hash = hashes.Hash(hashes.SHA256())
@@ -412,10 +430,11 @@ class QuicTlsContext:
                         client_hello_hash=self._client_hello_hash,
                         psk_ticket_data=self._psk_ticket_data,
                         psk_obfuscated_age=self._psk_obfuscated_age,
+                        peer_transport_params=self._peer_transport_params,
                     )
                 else:
                     break
-            except ValueError, BufferReadError:
+            except (ValueError, BufferReadError):
                 if self._state == TlsHandshakeState.START:
                     self._state = TlsHandshakeState.CLIENT_HELLO_RECEIVED
                 else:
@@ -433,6 +452,7 @@ class QuicTlsContext:
             client_hello_hash=self._client_hello_hash,
             psk_ticket_data=self._psk_ticket_data,
             psk_obfuscated_age=self._psk_obfuscated_age,
+            peer_transport_params=self._peer_transport_params,
         )
 
     def _handle_client_hello(self, msg: bytes) -> bytes:
@@ -446,6 +466,11 @@ class QuicTlsContext:
         ch_info = _parse_client_hello_full(msg)
         self._client_random = ch_info.random
         self._legacy_session_id = ch_info.session_id
+
+        # Parse peer QUIC transport parameters from ClientHello extensions
+        if QUIC_TP_EXT_TYPE in ch_info.extensions:
+            tp_buf = Buffer(data=ch_info.extensions[QUIC_TP_EXT_TYPE])
+            self._peer_transport_params = pull_quic_transport_parameters(tp_buf)
 
         # Check for PSK resumption
         psk: bytes | None = None
@@ -500,7 +525,10 @@ class QuicTlsContext:
         self._handshake_secret = _hkdf_extract(derived, shared)
 
         include_early_data = psk is not None and self.accept_early_data
-        ee = _build_encrypted_extensions(early_data=include_early_data)
+        ee = _build_encrypted_extensions(
+            early_data=include_early_data,
+            quic_transport_params=self._quic_transport_params,
+        )
         self._handshake_hash.update(ee)
 
         if psk is not None:
@@ -676,6 +704,7 @@ def _build_client_hello(
     key_share: tuple[int, bytes],
     server_name: str | None = None,
     session_ticket: SessionTicket | None = None,
+    quic_transport_params: bytes | None = None,
 ) -> bytes:
     """Build ClientHello message.
 
@@ -741,6 +770,11 @@ def _build_client_hello(
         sni_inner.push_bytes(sni_list.data)
         ext_buf.push_uint16(len(sni_inner.data))
         ext_buf.push_bytes(sni_inner.data)
+    # QUIC transport parameters (RFC 9001 §8.2)
+    if quic_transport_params is not None:
+        ext_buf.push_uint16(QUIC_TP_EXT_TYPE)
+        ext_buf.push_uint16(len(quic_transport_params))
+        ext_buf.push_bytes(quic_transport_params)
     # PSK extensions (must be last — RFC 8446 §4.2.11)
     if session_ticket is not None:
         # psk_key_exchange_modes
@@ -915,11 +949,14 @@ class QuicClientTlsContext:
         verify_mode: bool = True,
         server_name: str | None = None,
         session_ticket: SessionTicket | None = None,
+        quic_transport_params: bytes | None = None,
     ) -> None:
         self._ca_certs = ca_certs
         self._verify_mode = verify_mode
         self._server_name = server_name
         self._session_ticket = session_ticket
+        self._quic_transport_params = quic_transport_params
+        self._peer_transport_params: QuicTransportParameters | None = None
         self._state = ClientTlsState.START
         self._receive_buffer = b""
         self._handshake_hash = hashes.Hash(hashes.SHA256())
@@ -958,6 +995,7 @@ class QuicClientTlsContext:
             (GROUP_X25519, pub),
             server_name=self._server_name,
             session_ticket=self._session_ticket,
+            quic_transport_params=self._quic_transport_params,
         )
         self._handshake_hash.update(msg)
         # Capture transcript hash after just CH — needed for 0-RTT key derivation
@@ -1031,6 +1069,7 @@ class QuicClientTlsContext:
             early_secret=self._early_secret,
             client_hello_hash=self._client_hello_hash,
             early_data_accepted=self._early_data_accepted,
+            peer_transport_params=self._peer_transport_params,
         )
 
     def _handle_server_hello(self, msg: bytes) -> None:
@@ -1068,6 +1107,10 @@ class QuicClientTlsContext:
         self._handshake_hash.update(msg)
         extensions = _parse_encrypted_extensions(msg)
         self._early_data_accepted = EXT_EARLY_DATA in extensions
+        # Parse server QUIC transport parameters
+        if QUIC_TP_EXT_TYPE in extensions:
+            tp_buf = Buffer(data=extensions[QUIC_TP_EXT_TYPE])
+            self._peer_transport_params = pull_quic_transport_parameters(tp_buf)
         if self._is_psk:
             # PSK mode: no Certificate or CertificateVerify — go straight to Finished
             self._transcript_at_cert = self._handshake_hash.copy().finalize()
@@ -1111,7 +1154,7 @@ class QuicClientTlsContext:
                 )
                 verified = True
                 break
-            except InvalidSignature, ValueError:
+            except (InvalidSignature, ValueError):
                 continue
         if not verified:
             raise ValueError("Server certificate verification failed")

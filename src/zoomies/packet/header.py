@@ -72,7 +72,7 @@ def pull_destination_cid_for_routing(
             for cid in known_cids:
                 if cid and len(data) >= 1 + len(cid) and data[1 : 1 + len(cid)] == cid:
                     return cid
-    except ValueError, BufferReadError:
+    except (ValueError, BufferReadError):
         pass
     return None
 

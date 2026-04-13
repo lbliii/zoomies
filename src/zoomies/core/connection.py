@@ -77,6 +77,10 @@ from zoomies.packet.header import (
     pull_quic_header,
 )
 from zoomies.packet.retry import encode_quic_retry, get_retry_integrity_tag
+from zoomies.packet.transport_params import (
+    QuicTransportParameters,
+    push_quic_transport_parameters,
+)
 from zoomies.primitives import StreamId
 from zoomies.recovery import (
     CongestionController,
@@ -218,6 +222,35 @@ class QuicConnection:
         self._migrating_addr: tuple[str, int] | None = None  # addr being validated
         self._peer_disable_active_migration: bool = False  # peer's transport param
         self._datagram_addr: tuple[str, int] = ("", 0)  # addr of current datagram
+        # Connection-level flow control (RFC 9000 §4)
+        self._local_max_data = config.max_data  # how much peer can send us
+        self._local_max_data_used = 0  # how much peer has sent us
+        self._peer_max_data = 0  # how much we can send (set by peer's transport params)
+        # Key update tracking (RFC 9001 §6)
+        self._key_update_time: float | None = None  # when last key update occurred
+
+    def _build_transport_params_bytes(self) -> bytes:
+        """Serialize our QUIC transport parameters for the TLS handshake."""
+        params = QuicTransportParameters(
+            initial_max_data=self._config.max_data if self._config.max_data > 0 else None,
+            initial_max_stream_data_bidi_local=(
+                self._config.max_stream_data if self._config.max_stream_data > 0 else None
+            ),
+            initial_max_stream_data_bidi_remote=(
+                self._config.max_stream_data if self._config.max_stream_data > 0 else None
+            ),
+            initial_max_stream_data_uni=(
+                self._config.max_stream_data if self._config.max_stream_data > 0 else None
+            ),
+            max_idle_timeout=(
+                int(self._config.idle_timeout * 1000) if self._config.idle_timeout > 0 else None
+            ),
+            initial_max_streams_bidi=100,
+            initial_max_streams_uni=100,
+        )
+        buf = Buffer()
+        push_quic_transport_parameters(buf, params)
+        return buf.data
 
     @property
     def our_cid(self) -> bytes:
@@ -263,6 +296,7 @@ class QuicConnection:
             verify_mode=self._config.verify_mode,
             server_name=self._config.server_name,
             session_ticket=self._config.session_ticket,
+            quic_transport_params=self._build_transport_params_bytes(),
         )
         client_hello = self._client_tls_ctx.build_client_hello()
         self._client_hello_bytes = client_hello  # Cache for potential Retry resend
@@ -359,6 +393,15 @@ class QuicConnection:
         self, data: bytes, addr: tuple[str, int], *, now: float = 0.0
     ) -> list[QuicEvent]:
         """Process incoming datagram; returns events."""
+        if now <= 0.0:
+            import warnings
+
+            warnings.warn(
+                "Pass monotonic time to `now` for correct timer/RTT behavior. "
+                "Default now=0.0 will be removed in v1.0.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         events: list[QuicEvent] = []
         events.append(DatagramReceived(data=data, addr=addr))
         self._now = now
@@ -441,6 +484,7 @@ class QuicConnection:
             self._tls_ctx = QuicTlsContext(
                 certificate=self._config.certificate,
                 private_key=self._config.private_key,
+                quic_transport_params=self._build_transport_params_bytes(),
             )
             for ticket in self._session_tickets:
                 self._tls_ctx.add_session_ticket(ticket)
@@ -639,9 +683,13 @@ class QuicConnection:
             return
         encrypted_offset = buf.tell()
         try:
+            old_phase = self._one_rtt_crypto.key_phase
             _ph, plain_payload, pn, _kp = self._one_rtt_crypto.decrypt_packet_with_phase(
                 data, encrypted_offset, self._one_rtt_recv_pn
             )
+            # Detect key update: if phase changed, record time for old key discard
+            if self._one_rtt_crypto.key_phase != old_phase:
+                self._key_update_time = self._now if self._now > 0.0 else None
             self._one_rtt_recv_pn = pn + 1
             self._application_ack_ranges.add(pn)
             self._ack_needed_application = True
@@ -774,6 +822,11 @@ class QuicConnection:
                     self._queue_handshake_response(handshake_data)
             else:
                 self._queue_handshake_response(tls_data)
+        # Store peer transport params from ClientHello
+        if result.peer_transport_params is not None:
+            tp = result.peer_transport_params
+            if tp.initial_max_data is not None:
+                self._peer_max_data = tp.initial_max_data
         if result.traffic_secret and not self._one_rtt_crypto:
             self._one_rtt_crypto = CryptoPair()
             self._one_rtt_crypto.setup_1rtt(result.traffic_secret, is_client=False)
@@ -807,6 +860,11 @@ class QuicConnection:
         if result.data_to_send:
             # Client Finished — send in Handshake packet
             self._queue_handshake_response(result.data_to_send)
+        # Store peer transport params from EncryptedExtensions
+        if result.peer_transport_params is not None:
+            tp = result.peer_transport_params
+            if tp.initial_max_data is not None:
+                self._peer_max_data = tp.initial_max_data
         if result.traffic_secret and not self._one_rtt_crypto:
             self._one_rtt_crypto = CryptoPair()
             self._one_rtt_crypto.setup_1rtt(result.traffic_secret, is_client=True)
@@ -903,6 +961,14 @@ class QuicConnection:
                     if not stream._recv.flow_control_ok(frame.offset, len(frame.data)):
                         self._close_with_error(0x03, "Flow control limit exceeded", events)
                         return
+                    # Connection-level flow control (RFC 9000 §4.1)
+                    if self._local_max_data > 0:
+                        self._local_max_data_used += len(frame.data)
+                        if self._local_max_data_used > self._local_max_data:
+                            self._close_with_error(
+                                0x03, "Connection flow control limit exceeded", events
+                            )
+                            return
                     delivered = stream.add_receive_frame(frame)
                     if delivered or frame.fin:
                         events.append(
@@ -924,12 +990,12 @@ class QuicConnection:
                         events.append(
                             PacketDropped(reason=f"unknown_frame_skipped:0x{unknown_type:x}")
                         )
-                    except ValueError, BufferReadError:
+                    except (ValueError, BufferReadError):
                         events.append(
                             PacketDropped(reason=f"unknown_frame_no_length:0x{unknown_type:x}")
                         )
                         break
-            except ValueError, BufferReadError:
+            except (ValueError, BufferReadError):
                 break
 
     def _process_ack(self, ack: AckFrame) -> None:
@@ -1263,6 +1329,15 @@ class QuicConnection:
 
     def send_datagrams(self, *, now: float = 0.0) -> list[bytes]:
         """Return queued datagrams to send."""
+        if now <= 0.0:
+            import warnings
+
+            warnings.warn(
+                "Pass monotonic time to `now` for correct timer/RTT behavior. "
+                "Default now=0.0 will be removed in v1.0.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
         if now > 0.0:
             self._now = now
         out, self._send_queue = self._send_queue, []
@@ -1589,6 +1664,9 @@ class QuicConnection:
         # Idle timeout
         if self._last_activity > 0.0 and self._config.idle_timeout > 0:
             deadlines.append(self._last_activity + self._config.idle_timeout)
+        # Old key discard deadline (one PTO after key update)
+        if self._key_update_time is not None:
+            deadlines.append(self._key_update_time + self._rtt.pto_duration())
         # PTO: if there are ack-eliciting packets in flight
         for space in (self._initial_space, self._handshake_space, self._application_space):
             if space.has_ack_eliciting_in_flight:
@@ -1616,6 +1694,13 @@ class QuicConnection:
             if now >= idle_deadline:
                 self._close_with_error(0, "idle timeout", events)
                 return events
+
+        # Discard old decryption keys after one PTO (RFC 9001 §6.5)
+        if self._key_update_time is not None and self._one_rtt_crypto is not None:
+            pto = self._rtt.pto_duration()
+            if now >= self._key_update_time + pto:
+                self._one_rtt_crypto.discard_old_keys()
+                self._key_update_time = None
 
         # PTO expiry — send a probe (PING) and increment backoff
         for space in (self._initial_space, self._handshake_space, self._application_space):
