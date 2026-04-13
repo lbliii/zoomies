@@ -1,7 +1,5 @@
 """Tests for H3 SETTINGS frame and QPACK capacity negotiation."""
 
-import pytest
-
 from zoomies.encoding import Buffer
 from zoomies.encoding.varint import pull_varint
 from zoomies.events import StreamDataReceived

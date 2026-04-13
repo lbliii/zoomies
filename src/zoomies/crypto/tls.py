@@ -22,7 +22,6 @@ from zoomies.encoding.buffer import BufferReadError
 from zoomies.packet.transport_params import (
     QuicTransportParameters,
     pull_quic_transport_parameters,
-    push_quic_transport_parameters,
 )
 
 # TLS 1.3

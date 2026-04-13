@@ -180,7 +180,7 @@ def demo_timer_loop() -> None:
     import time
 
     from zoomies.core import QuicConfiguration, QuicConnection
-    from zoomies.events import ConnectionClosed, HandshakeComplete
+    from zoomies.events import ConnectionClosed
 
     ADDR = ("127.0.0.1", 4433)
 
