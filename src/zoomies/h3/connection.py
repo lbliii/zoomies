@@ -255,9 +255,7 @@ class H3Connection:
             DeprecationWarning,
             stacklevel=2,
         )
-        return self._stream_data_received(
-            stream_id, data, end_stream, is_0rtt=is_0rtt
-        )
+        return self._stream_data_received(stream_id, data, end_stream, is_0rtt=is_0rtt)
 
     def _stream_data_received(
         self,

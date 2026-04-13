@@ -56,14 +56,8 @@ class QuicConfiguration:
     def __post_init__(self) -> None:
         if not self.is_client:
             if not self.certificate:
-                raise ValueError(
-                    "Server QuicConfiguration requires non-empty 'certificate'"
-                )
+                raise ValueError("Server QuicConfiguration requires non-empty 'certificate'")
             if not self.private_key:
-                raise ValueError(
-                    "Server QuicConfiguration requires non-empty 'private_key'"
-                )
+                raise ValueError("Server QuicConfiguration requires non-empty 'private_key'")
         if self.is_client and self.verify_mode and self.ca_certs is None:
-            raise ValueError(
-                "Client QuicConfiguration with verify_mode=True requires 'ca_certs'"
-            )
+            raise ValueError("Client QuicConfiguration with verify_mode=True requires 'ca_certs'")

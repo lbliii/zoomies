@@ -294,9 +294,7 @@ class CryptoPair:
                 packet, encrypted_offset, pn_len
             )
             incoming_phase = (plain_header[0] >> 2) & 1
-            plain = self._recv._decrypt_payload(
-                ciphertext, plain_header, expected_packet_number
-            )
+            plain = self._recv._decrypt_payload(ciphertext, plain_header, expected_packet_number)
             pn_bytes = plain[:pn_len]
             pn = int.from_bytes(pn_bytes, "big")
             pn = decode_packet_number(pn, pn_len * 8, expected_packet_number)
@@ -332,9 +330,7 @@ class CryptoPair:
             next_recv = CryptoContext()
             next_recv.setup(secret=next_recv_secret)
             try:
-                plain = next_recv._decrypt_payload(
-                    ciphertext, plain_header, expected_packet_number
-                )
+                plain = next_recv._decrypt_payload(ciphertext, plain_header, expected_packet_number)
             except InvalidTag:
                 raise  # Neither current nor next-gen keys work
             # Success — commit the key update

@@ -348,8 +348,7 @@ class QuicConnection:
             limit = self._config.max_send_queue_bytes
             if limit > 0 and self._stream_send_queue_bytes + len(data) > limit:
                 raise BufferError(
-                    f"Send queue full ({self._stream_send_queue_bytes} bytes queued, "
-                    f"limit {limit})"
+                    f"Send queue full ({self._stream_send_queue_bytes} bytes queued, limit {limit})"
                 )
             self._stream_send_queue.append((stream_id, data, end_stream))
             self._stream_send_queue_bytes += len(data)
@@ -906,9 +905,9 @@ class QuicConnection:
                     try:
                         frame_len = buf.pull_uint_var()
                         buf.pull_bytes(frame_len)
-                    except (ValueError, BufferReadError):
+                    except ValueError, BufferReadError:
                         break
-            except (ValueError, BufferReadError):
+            except ValueError, BufferReadError:
                 break
 
     def _process_ack(self, ack: AckFrame) -> None:
@@ -958,13 +957,9 @@ class QuicConnection:
                 if isinstance(frame, SentCryptoFrame):
                     # Route to the correct level's retransmit queue
                     if space is self._initial_space:
-                        self._crypto_retransmit_initial.append(
-                            (frame.offset, frame.length)
-                        )
+                        self._crypto_retransmit_initial.append((frame.offset, frame.length))
                     else:
-                        self._crypto_retransmit_handshake.append(
-                            (frame.offset, frame.length)
-                        )
+                        self._crypto_retransmit_handshake.append((frame.offset, frame.length))
                 elif isinstance(frame, SentStreamFrame):
                     # Retrieve original data from stream send buffer
                     stream = self._get_or_create_stream(StreamId(frame.stream_id))
@@ -978,9 +973,7 @@ class QuicConnection:
                 # SentPingFrame: NOT retransmitted
                 # SentNewConnectionIdFrame: NOT retransmitted (idempotent)
 
-    def _get_crypto_send_data(
-        self, offset: int, length: int, *, level: str
-    ) -> bytes | None:
+    def _get_crypto_send_data(self, offset: int, length: int, *, level: str) -> bytes | None:
         """Retrieve CRYPTO data from the send buffer for retransmission."""
         if level == "initial":
             buf = self._initial_crypto_send_buf
@@ -1232,9 +1225,7 @@ class QuicConnection:
         push_ack_frame(payload_buf, ack)
         plain_payload = payload_buf.data
         header_buf = Buffer()
-        push_short_header(
-            header_buf, self._peer_cid, pn, key_phase=crypto.key_phase
-        )
+        push_short_header(header_buf, self._peer_cid, pn, key_phase=crypto.key_phase)
         plain_header = header_buf.data
         encrypted = crypto.encrypt_packet(plain_header, plain_payload, pn)
         # ACK-only packets are NOT ack-eliciting and NOT in-flight (RFC 9002)
@@ -1477,7 +1468,10 @@ class QuicConnection:
         pn_len = self._optimal_pn_length()
         header_buf = Buffer()
         push_short_header(
-            header_buf, self._peer_cid, pn, pn_len=pn_len,
+            header_buf,
+            self._peer_cid,
+            pn,
+            pn_len=pn_len,
             key_phase=self._one_rtt_crypto.key_phase,
         )
         plain_header = header_buf.data

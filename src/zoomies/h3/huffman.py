@@ -117,15 +117,13 @@ def huffman_decode(data: bytes) -> bytes:
 
     # Remaining bits must be padding (all 1s, less than 8 bits)
     if nbits > 7:
-        raise ValueError(
-            f"Invalid Huffman padding: {nbits} bits remaining (max 7)"
-        )
+        raise ValueError(f"Invalid Huffman padding: {nbits} bits remaining (max 7)")
     if nbits > 0:
         padding = bits & ((1 << nbits) - 1)
         expected = (1 << nbits) - 1
         if padding != expected:
             raise ValueError(
-                f"Invalid Huffman padding: expected all 1s, got {padding:#0{nbits+2}b}"
+                f"Invalid Huffman padding: expected all 1s, got {padding:#0{nbits + 2}b}"
             )
 
     return bytes(result)
