@@ -157,7 +157,11 @@ def demo_loss_detection() -> None:
 
 
 def demo_timer_loop() -> None:
-    """Sans-I/O timer-driven recovery loop using QuicConnection."""
+    """Sans-I/O timer-driven recovery loop using QuicConnection.
+
+    Demonstrates the get_timer() / handle_timer() pattern that callers
+    must implement. Uses a real client-server handshake (no private API).
+    """
     print("\n=== Sans-I/O Timer Loop ===\n")
 
     repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -173,52 +177,60 @@ def demo_timer_loop() -> None:
     with open(key_path, "rb") as f:
         key = f.read()
 
+    import time
+
     from zoomies.core import QuicConfiguration, QuicConnection
-    from zoomies.core.connection import ConnectionState
-    from zoomies.crypto import CryptoPair
-    from zoomies.events import ConnectionClosed
+    from zoomies.events import ConnectionClosed, HandshakeComplete
 
-    SERVER_CID = bytes.fromhex("8394c8f03e515708")
-    CLIENT_CID = bytes.fromhex("f067a5502a4262b5")
+    ADDR = ("127.0.0.1", 4433)
 
-    config = QuicConfiguration(certificate=cert, private_key=key)
-    conn = QuicConnection(config)
-    conn._state = ConnectionState.ONE_RTT
-    conn._our_cid = SERVER_CID
-    conn._peer_cid = CLIENT_CID
-    conn._one_rtt_crypto = CryptoPair()
-    conn._one_rtt_crypto.setup_initial(cid=SERVER_CID, is_client=False)
-    conn._address_validated = True
+    # --- Set up client and server ---
+    server_config = QuicConfiguration(certificate=cert, private_key=key)
+    client_config = QuicConfiguration(
+        is_client=True, verify_mode=False, ca_certs=None  # loopback demo
+    )
 
-    # Queue stream data
-    conn.send_stream_data(stream_id=0, data=b"timer demo", end_stream=True)
-    datagrams = conn.send_datagrams()
-    print(f"  Sent {len(datagrams)} datagram(s)")
+    server = QuicConnection(server_config)
+    client = QuicConnection(client_config)
 
-    # Sans-I/O timer pattern: the caller drives the clock
-    # Pretend no ACKs arrive — PTO will fire and retransmit
-    now = 1.0
-    conn._last_activity = now
+    # --- Perform handshake via loopback ---
+    now = time.monotonic()
+    client.connect()
+    for dg in client.send_datagrams(now=now):
+        events = server.datagram_received(dg, ADDR, now=now)
+    for dg in server.send_datagrams(now=now):
+        events = client.datagram_received(dg, ADDR, now=now)
+    for dg in client.send_datagrams(now=now):
+        events = server.datagram_received(dg, ADDR, now=now)
+    for dg in server.send_datagrams(now=now):
+        events = client.datagram_received(dg, ADDR, now=now)
 
+    print("  Handshake complete (client-server loopback)")
+
+    # --- Client sends stream data, then we stop forwarding ACKs ---
+    client.send_stream_data(stream_id=0, data=b"timer demo", end_stream=True)
+    datagrams = client.send_datagrams(now=now)
+    print(f"  Client sent {len(datagrams)} datagram(s)")
+
+    # Sans-I/O timer pattern: the caller drives the clock.
+    # We intentionally don't deliver these datagrams to the server,
+    # so no ACK comes back — PTO will fire and retransmit.
     print("  Simulating no ACKs (PTO retransmission):\n")
+    start = now
     for _tick in range(8):
         now += 0.25  # advance 250ms per tick
-        timer = conn.get_timer()
+        timer = client.get_timer()
         if timer is not None and now >= timer:
-            events = conn.handle_timer(now)
-            retransmit = conn.send_datagrams()
+            events = client.handle_timer(now)
+            retransmit = client.send_datagrams(now=now)
             closed = any(isinstance(e, ConnectionClosed) for e in events)
             print(
-                f"  t={now - 1.0:.2f}s: timer fired, "
+                f"  t={now - start:.2f}s: timer fired, "
                 f"retransmit={len(retransmit)} pkt(s), "
-                f"pto_count={conn._pto_count}, "
                 f"closed={closed}"
             )
             if closed:
                 break
-
-    print(f"\n  RTT (no samples): smoothed={conn._rtt.smoothed_rtt:.3f}s")
-    print(f"  Congestion window: {conn._cc.congestion_window} bytes")
 
 
 if __name__ == "__main__":

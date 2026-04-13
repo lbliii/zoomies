@@ -1,6 +1,6 @@
 # Epic: Sharp Edges v3 — Make Zoomies Powerful, Ergonomic, Intuitive, and Reliable
 
-**Status**: Draft
+**Status**: Complete
 **Created**: 2026-04-13
 **Target**: v0.4.0
 **Estimated Effort**: 20–30h
