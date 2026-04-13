@@ -811,8 +811,7 @@ class QuicConnection:
             self._one_rtt_crypto = CryptoPair()
             self._one_rtt_crypto.setup_1rtt(result.traffic_secret, is_client=True)
             # Client doesn't emit HandshakeComplete yet — wait for HANDSHAKE_DONE
-        for ticket in result.session_tickets:
-            events.append(NewSessionTicket(ticket=ticket))
+        events.extend(NewSessionTicket(ticket=ticket) for ticket in result.session_tickets)
 
     def _parse_payload_frames(
         self,
@@ -916,7 +915,7 @@ class QuicConnection:
                         )
                 else:
                     # Unknown frame type — skip per RFC 9000 §19
-                    frame_type = buf.pull_uint_var()
+                    buf.pull_uint_var()
                     # Best effort: try to skip the frame body if it has a length prefix
                     # If not, we have to break (can't determine frame size)
                     try:

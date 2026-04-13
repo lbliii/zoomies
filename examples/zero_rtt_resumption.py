@@ -90,8 +90,6 @@ def pump(client: QuicConnection, server: QuicConnection) -> tuple[list, list]:
 
 
 def main() -> None:
-    addr = ("127.0.0.1", 4433)
-
     # ==================================================================
     # PHASE 1: Initial handshake — obtain a session ticket
     # ==================================================================
@@ -128,7 +126,7 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Step 1: Server generates a session ticket after handshake
     # ------------------------------------------------------------------
-    nst_bytes, ticket = server.generate_session_ticket()
+    _nst_bytes, ticket = server.generate_session_ticket()
     print(f"  Server issued ticket: {len(ticket.ticket)}B, lifetime={ticket.lifetime}s")
 
     # The server sends the NST message in a 1-RTT packet.  In a real
@@ -142,7 +140,7 @@ def main() -> None:
     # surfaces as a NewSessionTicket event automatically.  Here we
     # demonstrate the event type the caller should watch for.
     stored_ticket = ticket
-    print(f"  Client stored ticket for reconnection.")
+    print("  Client stored ticket for reconnection.")
 
     # ==================================================================
     # PHASE 2: Reconnection with 0-RTT early data

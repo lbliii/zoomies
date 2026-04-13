@@ -28,13 +28,13 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from zoomies.core import QuicConfiguration, QuicConnection
 from zoomies.events import (
     ConnectionClosed,
+    H3HeadersReceived,
     HandshakeComplete,
     NewSessionTicket,
     PacketDropped,
     StreamDataReceived,
 )
 from zoomies.h3 import H3Connection
-from zoomies.events import H3HeadersReceived
 
 # --- Certificate loading ---
 
@@ -80,10 +80,7 @@ def serve(host: str = "127.0.0.1", port: int = 4433) -> None:
             # get_timer() returns the next deadline (absolute time), or None.
             # Use it as the select() timeout so we wake up at the right time.
             deadline = quic.get_timer()
-            if deadline is not None:
-                timeout = max(0.0, deadline - time.monotonic())
-            else:
-                timeout = 1.0  # Poll interval when no timer pending
+            timeout = max(0.0, deadline - time.monotonic()) if deadline is not None else 1.0
 
             # --- 4. Wait for data or timer ---
             readable, _, _ = select.select([sock], [], [], timeout)
