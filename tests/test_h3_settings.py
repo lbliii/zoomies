@@ -1,7 +1,5 @@
 """Tests for H3 SETTINGS frame and QPACK capacity negotiation."""
 
-import pytest
-
 from zoomies.encoding import Buffer
 from zoomies.encoding.varint import pull_varint
 from zoomies.events import StreamDataReceived
@@ -67,12 +65,12 @@ class TestH3ConnectionSettings:
         frame_type = pull_varint(buf)
         assert frame_type == 0x04
 
-    def test_settings_data_raises_on_second_call(self) -> None:
+    def test_settings_data_returns_none_on_second_call(self) -> None:
         conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         first = conn.settings_data()
         assert first is not None
-        with pytest.raises(RuntimeError, match="settings_data\\(\\) already called"):
-            conn.settings_data()
+        second = conn.settings_data()
+        assert second is None
 
     def test_settings_data_empty_when_no_capacity(self) -> None:
         """Even with no QPACK capacity, settings_data returns valid frame."""

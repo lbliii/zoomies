@@ -61,7 +61,11 @@ class Buffer:
     def pull_bytes(self, length: int) -> bytes:
         """Read length bytes, advance position."""
         if self._pos + length > len(self._data):
-            raise BufferReadError("Read out of bounds")
+            remaining = len(self._data) - self._pos
+            raise BufferReadError(
+                f"Read out of bounds: need {length} bytes at position {self._pos}, "
+                f"but only {remaining} of {len(self._data)} remain"
+            )
         result = bytes(self._data[self._pos : self._pos + length])
         self._pos += length
         return result
