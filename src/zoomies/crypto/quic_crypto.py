@@ -1,5 +1,6 @@
 """QUIC packet protection — key derivation, AEAD, header protection (RFC 9001)."""
 
+from cryptography.exceptions import InvalidTag
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
@@ -123,6 +124,7 @@ class CryptoPair:
         self._recv = CryptoContext()
         self._send = CryptoContext()
         self._key_phase: int = 0
+        self._old_recv: CryptoContext | None = None  # previous recv keys for reordered packets
 
     def setup_initial(
         self,
@@ -244,6 +246,7 @@ class CryptoPair:
 
         Derives new secrets using HKDF-Expand-Label with "quic ku" label,
         then sets up new AEAD keys. Flips the key phase bit.
+        Retains old receive keys for reordered packets (RFC 9001 §6.5).
         """
         if self._recv._secret is None or self._send._secret is None:
             raise RuntimeError("Cannot update keys: 1-RTT keys not set up")
@@ -261,9 +264,85 @@ class CryptoPair:
             b"",
             hashes.SHA256.digest_size,
         )
+        # Retain old recv keys for reordered packets
+        self._old_recv = self._recv
+        self._recv = CryptoContext()
         self._recv.setup(secret=new_recv_secret)
         self._send.setup(secret=new_send_secret)
         self._key_phase ^= 1
+
+    def discard_old_keys(self) -> None:
+        """Discard old receive keys (call after one PTO)."""
+        self._old_recv = None
+
+    def decrypt_packet_with_phase(
+        self,
+        packet: bytes,
+        encrypted_offset: int,
+        expected_packet_number: int,
+    ) -> tuple[bytes, bytes, int, int]:
+        """Decrypt packet with key phase detection (RFC 9001 §6).
+
+        Returns (plain_header, plain_payload, packet_number, key_phase_bit).
+        On InvalidTag with current keys, tries next-generation keys if key phase
+        differs. On success with next-gen keys, commits the key update.
+        """
+        pn_len = 4
+        # Try current keys first
+        try:
+            plain_header, ciphertext = self._recv._remove_header_protection(
+                packet, encrypted_offset, pn_len
+            )
+            incoming_phase = (plain_header[0] >> 2) & 1
+            plain = self._recv._decrypt_payload(
+                ciphertext, plain_header, expected_packet_number
+            )
+            pn_bytes = plain[:pn_len]
+            pn = int.from_bytes(pn_bytes, "big")
+            pn = decode_packet_number(pn, pn_len * 8, expected_packet_number)
+            plain_payload = plain[pn_len:]
+            return plain_header, plain_payload, pn, incoming_phase
+        except InvalidTag:
+            # Header protection was already removed, check if key phase differs
+            incoming_phase = (plain_header[0] >> 2) & 1
+            if incoming_phase == self._key_phase:
+                # Same phase — genuine decryption failure, try old keys for reorder
+                if self._old_recv is not None:
+                    try:
+                        old_plain = self._old_recv._decrypt_payload(
+                            ciphertext, plain_header, expected_packet_number
+                        )
+                        pn_bytes = old_plain[:pn_len]
+                        pn = int.from_bytes(pn_bytes, "big")
+                        pn = decode_packet_number(pn, pn_len * 8, expected_packet_number)
+                        plain_payload = old_plain[pn_len:]
+                        return plain_header, plain_payload, pn, incoming_phase
+                    except InvalidTag:
+                        pass
+                raise
+            # Different phase — peer initiated key update, try next-gen keys
+            next_recv_secret = hkdf_expand_label(
+                hashes.SHA256,
+                self._recv._secret,
+                b"quic ku",
+                b"",
+                hashes.SHA256.digest_size,
+            )
+            next_recv = CryptoContext()
+            next_recv.setup(secret=next_recv_secret)
+            try:
+                plain = next_recv._decrypt_payload(
+                    ciphertext, plain_header, expected_packet_number
+                )
+            except InvalidTag:
+                raise  # Neither current nor next-gen keys work
+            # Success — commit the key update
+            pn_bytes = plain[:pn_len]
+            pn = int.from_bytes(pn_bytes, "big")
+            pn = decode_packet_number(pn, pn_len * 8, expected_packet_number)
+            plain_payload = plain[pn_len:]
+            self.update_keys()
+            return plain_header, plain_payload, pn, incoming_phase
 
     def encrypt_packet(
         self,

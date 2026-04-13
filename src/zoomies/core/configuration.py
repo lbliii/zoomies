@@ -48,6 +48,7 @@ class QuicConfiguration:
     max_data: int = 0
     max_stream_data: int = 0
     idle_timeout: float = 30.0
+    max_send_queue_bytes: int = 16 * 1024 * 1024  # 16 MB default
     zero_rtt_policy: ZeroRttPolicy | None = None
     session_ticket: SessionTicket | None = None
     retry_token_handler: RetryTokenHandler | None = None
