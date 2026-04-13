@@ -321,6 +321,7 @@ class CryptoPair:
                         pass
                 raise
             # Different phase — peer initiated key update, try next-gen keys
+            assert self._recv._secret is not None, "recv secret not initialized"
             next_recv_secret = hkdf_expand_label(
                 hashes.SHA256,
                 self._recv._secret,

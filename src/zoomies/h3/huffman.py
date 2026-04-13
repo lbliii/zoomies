@@ -5,7 +5,7 @@ and avoids the complexity of the encoding path.
 """
 
 # RFC 7541 Appendix B — Huffman code table.
-# Each entry: (code, bit_length) for symbols 0–255, plus EOS (256).
+# Each entry: (code, bit_length) for symbols 0-255, plus EOS (256).
 # fmt: off
 _HUFFMAN_CODES: tuple[tuple[int, int], ...] = (
     (0x1ff8, 13), (0x7fffd8, 23), (0xfffffe2, 28), (0xfffffe3, 28),
@@ -79,9 +79,9 @@ _HUFFMAN_CODES: tuple[tuple[int, int], ...] = (
 # Build reverse lookup: bit-string -> symbol
 # For decoding we use a simple bit-by-bit trie stored as a flat dict.
 # Key: (accumulated_bits, bit_count). Value: symbol (0-255).
-_DECODE_TABLE: dict[tuple[int, int], int] = {}
-for _sym, (_code, _bits) in enumerate(_HUFFMAN_CODES[:256]):
-    _DECODE_TABLE[(_code, _bits)] = _sym
+_DECODE_TABLE: dict[tuple[int, int], int] = {
+    (_code, _bits): _sym for _sym, (_code, _bits) in enumerate(_HUFFMAN_CODES[:256])
+}
 
 
 def huffman_decode(data: bytes) -> bytes:
