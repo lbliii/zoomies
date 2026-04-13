@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from zoomies.encoding import Buffer
+from zoomies.h3.huffman import huffman_decode
 
 # ---------------------------------------------------------------------------
 # Encoder instructions (RFC 9204 §4.3) — sent on encoder stream
@@ -224,5 +225,5 @@ def _pull_string(buf: Buffer, *, prefix_bits: int) -> str:
     length = _pull_prefixed_int(buf, first, prefix_bits)
     data = buf.pull_bytes(length)
     if huffman:
-        raise ValueError("Huffman-encoded strings not supported")
+        data = huffman_decode(data)
     return data.decode("utf-8")
