@@ -915,15 +915,19 @@ class QuicConnection:
                         )
                 else:
                     # Unknown frame type — skip per RFC 9000 §19
-                    buf.pull_uint_var()
+                    unknown_type = buf.pull_uint_var()
                     # Best effort: try to skip the frame body if it has a length prefix
                     # If not, we have to break (can't determine frame size)
                     try:
                         frame_len = buf.pull_uint_var()
                         buf.pull_bytes(frame_len)
-                        events.append(PacketDropped(reason="unknown_frame_skipped"))
+                        events.append(
+                            PacketDropped(reason=f"unknown_frame_skipped:0x{unknown_type:x}")
+                        )
                     except ValueError, BufferReadError:
-                        events.append(PacketDropped(reason="unknown_frame_no_length"))
+                        events.append(
+                            PacketDropped(reason=f"unknown_frame_no_length:0x{unknown_type:x}")
+                        )
                         break
             except ValueError, BufferReadError:
                 break

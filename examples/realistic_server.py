@@ -74,6 +74,8 @@ def serve(host: str = "127.0.0.1", port: int = 4433) -> None:
 
     print("Waiting for QUIC client... (try: curl --http3 -k https://localhost:4433/)")
 
+    peer_addr: tuple[str, int] | None = None
+
     try:
         while True:
             # --- 3. Timer integration ---
@@ -90,6 +92,7 @@ def serve(host: str = "127.0.0.1", port: int = 4433) -> None:
             if readable:
                 # --- 5. Receive datagram -> feed to QUIC ---
                 data, addr = sock.recvfrom(65535)
+                peer_addr = addr
                 events = quic.datagram_received(data, addr, now=now)
 
                 # --- 6. Process QUIC events ---
@@ -136,14 +139,16 @@ def serve(host: str = "127.0.0.1", port: int = 4433) -> None:
                         return
 
             # --- 8. Transmit outgoing datagrams ---
-            for dgram in quic.send_datagrams():
-                sock.sendto(dgram, addr if readable else quic._peer_addr)
+            if peer_addr is not None:
+                for dgram in quic.send_datagrams():
+                    sock.sendto(dgram, peer_addr)
 
     except KeyboardInterrupt:
         print("\nShutting down...")
         quic.close(reason="server shutdown")
-        for dgram in quic.send_datagrams():
-            sock.sendto(dgram, quic._peer_addr)
+        if peer_addr is not None:
+            for dgram in quic.send_datagrams():
+                sock.sendto(dgram, peer_addr)
     finally:
         sock.close()
 

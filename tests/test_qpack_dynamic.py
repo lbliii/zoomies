@@ -171,7 +171,7 @@ class TestH3ConnectionDynamic:
             def send_stream_data(self, stream_id: int, data: bytes, end_stream: bool) -> None:
                 sent.append((stream_id, data, end_stream))
 
-        conn = H3Connection(sender=MockSender(), qpack_max_table_capacity=4096)
+        conn = H3Connection(sender=MockSender(), is_client=True, qpack_max_table_capacity=4096)
 
         headers = [
             (b":status", b"200"),
@@ -223,7 +223,7 @@ class TestH3ConnectionDynamic:
         payload = enc.encode(headers)
         frame = _encode_frame(H3_FRAME_HEADERS, payload)
 
-        conn = H3Connection(qpack_max_table_capacity=4096)
+        conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         # Feed encoder instructions to the connection's decoder
         conn.feed_encoder_stream(enc.encoder_stream_data())
 

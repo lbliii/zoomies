@@ -96,21 +96,27 @@ class H3Connection:
         self,
         sender: H3StreamSender | None = None,
         *,
-        is_client: bool = True,
+        is_client: bool | None = None,
         qpack_max_table_capacity: int = 0,
         qpack_blocked_streams: int = 0,
         encoder_stream_id: int | None = None,
     ) -> None:
+        if is_client is None and qpack_max_table_capacity > 0 and encoder_stream_id is None:
+            raise ValueError(
+                "is_client is required when qpack_max_table_capacity > 0 "
+                "(needed to allocate the correct unidirectional stream IDs)"
+            )
+        resolved_is_client = is_client if is_client is not None else True
         self._stream_buffers: dict[int, bytearray] = {}
         self._sender = sender
-        self._is_client = is_client
+        self._is_client = resolved_is_client
         self._qpack_max_table_capacity = qpack_max_table_capacity
         self._qpack_blocked_streams = qpack_blocked_streams
         self._peer_settings: dict[int, int] | None = None
         self._settings_sent = False
         self._encoder_stream_opened = False
         # Unidirectional stream ID allocation: client starts at 2, server at 3
-        self._next_uni_stream_id = 2 if is_client else 3
+        self._next_uni_stream_id = 2 if resolved_is_client else 3
 
         if encoder_stream_id is not None:
             import warnings

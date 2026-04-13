@@ -122,19 +122,16 @@ def main() -> None:
     # ------------------------------------------------------------------
     # Step 1: Server generates a session ticket after handshake
     # ------------------------------------------------------------------
-    _nst_bytes, ticket = server.generate_session_ticket()
+    _, ticket = server.generate_session_ticket()
     print(f"  Server issued ticket: {len(ticket.ticket)}B, lifetime={ticket.lifetime}s")
 
-    # The server sends the NST message in a 1-RTT packet.  In a real
-    # server you would call send_stream_data() on the crypto stream or
-    # use the higher-level API.  For this demo we feed it directly.
-
     # ------------------------------------------------------------------
-    # Step 2: Client receives NewSessionTicket event
+    # Step 2: Client stores the session ticket
     # ------------------------------------------------------------------
-    # In production, the NST is delivered inside datagram_received() and
-    # surfaces as a NewSessionTicket event automatically.  Here we
-    # demonstrate the event type the caller should watch for.
+    # In production, the server sends the NST in a 1-RTT packet and the
+    # client receives it as a NewSessionTicket event from datagram_received().
+    # Here we shortcut by using the ticket object directly — the reconnection
+    # flow in Phase 2 is identical either way.
     stored_ticket = ticket
     print("  Client stored ticket for reconnection.")
 
