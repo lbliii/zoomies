@@ -1,16 +1,6 @@
 """Sent packet metadata for loss detection and retransmission (RFC 9002)."""
 
 from dataclasses import dataclass
-from enum import StrEnum
-
-
-class PacketNumberSpace(StrEnum):
-    """QUIC packet number spaces (RFC 9002 §A.2)."""
-
-    INITIAL = "initial"
-    HANDSHAKE = "handshake"
-    APPLICATION = "application"
-
 
 # --- Sent frame metadata (lightweight — not the actual bytes) ---
 

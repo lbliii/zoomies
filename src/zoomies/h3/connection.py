@@ -154,7 +154,7 @@ class H3Connection:
         type prefix (varint 0x00).
         """
         if self._settings_sent:
-            return None
+            raise RuntimeError("settings_data() already called")
         self._settings_sent = True
         settings = self.local_settings()
         payload = encode_settings(settings)
@@ -183,7 +183,7 @@ class H3Connection:
     def handle_event(self, event: QuicEvent) -> list[H3Event]:
         """Process QUIC event; returns H3 events for StreamDataReceived only."""
         if isinstance(event, StreamDataReceived):
-            return self.stream_data_received(
+            return self._stream_data_received(
                 event.stream_id,
                 event.data,
                 event.end_stream,
@@ -242,7 +242,31 @@ class H3Connection:
         end_stream: bool,
         is_0rtt: bool = False,
     ) -> list[H3Event]:
-        """Process stream data; returns H3 events."""
+        """Process stream data; returns H3 events.
+
+        .. deprecated::
+            Use :meth:`handle_event` instead. This method will be removed
+            in a future release.
+        """
+        import warnings
+
+        warnings.warn(
+            "stream_data_received() is deprecated, use handle_event() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._stream_data_received(
+            stream_id, data, end_stream, is_0rtt=is_0rtt
+        )
+
+    def _stream_data_received(
+        self,
+        stream_id: int,
+        data: bytes,
+        end_stream: bool,
+        is_0rtt: bool = False,
+    ) -> list[H3Event]:
+        """Process stream data; returns H3 events (internal)."""
         events: list[H3Event] = []
         self._stream_buffers.setdefault(stream_id, bytearray()).extend(data)
         buf = self._stream_buffers[stream_id]

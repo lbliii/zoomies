@@ -226,7 +226,7 @@ class TestH3ConnectionDynamic:
         # Feed encoder instructions to the connection's decoder
         conn.feed_encoder_stream(enc.encoder_stream_data())
 
-        events = conn.stream_data_received(stream_id=0, data=frame, end_stream=True)
+        events = conn._stream_data_received(stream_id=0, data=frame, end_stream=True)
         assert len(events) == 1
         assert isinstance(events[0], H3HeadersReceived)
         assert events[0].headers[0] == (b":method", b"GET")
