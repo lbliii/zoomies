@@ -79,13 +79,9 @@ def pump(client: QuicConnection, server: QuicConnection) -> tuple[list, list]:
         if not c_out and not s_out:
             break
         for dgram in c_out:
-            server_events.extend(
-                server.datagram_received(dgram, ("127.0.0.1", 9999), now=now)
-            )
+            server_events.extend(server.datagram_received(dgram, ("127.0.0.1", 9999), now=now))
         for dgram in s_out:
-            client_events.extend(
-                client.datagram_received(dgram, ("127.0.0.1", 4433), now=now)
-            )
+            client_events.extend(client.datagram_received(dgram, ("127.0.0.1", 4433), now=now))
     return client_events, server_events
 
 

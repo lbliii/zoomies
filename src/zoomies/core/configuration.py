@@ -78,8 +78,8 @@ class QuicConfiguration:
     ca_certs: bytes | None = None
     verify_mode: bool = True
     server_name: str | None = None
-    max_data: int = 1_048_576          # 1 MB connection-level flow control
-    max_stream_data: int = 1_048_576   # 1 MB per-stream flow control
+    max_data: int = 1_048_576  # 1 MB connection-level flow control
+    max_stream_data: int = 1_048_576  # 1 MB per-stream flow control
     idle_timeout: float = 30.0
     max_send_queue_bytes: int = 16 * 1024 * 1024  # 16 MB default
     zero_rtt_policy: ZeroRttPolicy | None = None

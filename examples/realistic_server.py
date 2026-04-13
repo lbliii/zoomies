@@ -65,8 +65,8 @@ def serve(host: str = "127.0.0.1", port: int = 4433) -> None:
     config = QuicConfiguration(
         certificate=CERT,
         private_key=KEY,
-        idle_timeout=30.0,      # Close after 30s idle
-        max_data=1_048_576,     # 1 MB connection-level flow control
+        idle_timeout=30.0,  # Close after 30s idle
+        max_data=1_048_576,  # 1 MB connection-level flow control
         max_stream_data=1_048_576,  # 1 MB per-stream
     )
     quic = QuicConnection(config)

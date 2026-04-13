@@ -922,10 +922,10 @@ class QuicConnection:
                         frame_len = buf.pull_uint_var()
                         buf.pull_bytes(frame_len)
                         events.append(PacketDropped(reason="unknown_frame_skipped"))
-                    except (ValueError, BufferReadError):
+                    except ValueError, BufferReadError:
                         events.append(PacketDropped(reason="unknown_frame_no_length"))
                         break
-            except (ValueError, BufferReadError):
+            except ValueError, BufferReadError:
                 break
 
     def _process_ack(self, ack: AckFrame) -> None:
