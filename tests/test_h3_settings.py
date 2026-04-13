@@ -4,6 +4,7 @@ import pytest
 
 from zoomies.encoding import Buffer
 from zoomies.encoding.varint import pull_varint
+from zoomies.events import StreamDataReceived
 from zoomies.h3.connection import (
     H3_STREAM_TYPE_CONTROL,
     SETTINGS_QPACK_BLOCKED_STREAMS,
@@ -128,7 +129,8 @@ class TestPeerSettingsNegotiation:
         payload = encode_settings(settings)
         frame = _encode_frame(H3_FRAME_SETTINGS, payload)
 
-        events = conn._stream_data_received(stream_id=2, data=frame, end_stream=False)
+        event = StreamDataReceived(stream_id=2, data=frame, end_stream=False)
+        events = conn.handle_event(event)
         # SETTINGS doesn't produce H3 events
         assert len(events) == 0
         # But peer settings should be applied

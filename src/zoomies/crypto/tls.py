@@ -79,7 +79,7 @@ class TlsHandshakeResult:
     data_to_send: bytes
     handshake_secret: bytes | None = None
     traffic_secret: bytes | None = None
-    session_ticket: SessionTicket | None = None
+    session_tickets: tuple[SessionTicket, ...] = ()
     early_secret: bytes | None = None
     client_hello_hash: bytes | None = None
     is_psk: bool = False
@@ -93,7 +93,19 @@ class SessionTicket:
     """Opaque session ticket for TLS 1.3 resumption and 0-RTT.
 
     Issued by server after handshake via NewSessionTicket message.
-    Client stores and presents on reconnection.
+    Client stores and presents on reconnection via
+    ``QuicConfiguration.session_ticket``.
+
+    **Limitations**: Tickets contain an in-memory random nonce and the
+    resumption secret in plaintext. They are NOT stateless encrypted tokens.
+    This means:
+
+    - Tickets are only valid for the server process that issued them.
+    - Multi-instance deployments require a shared ticket store or a custom
+      ticket encryption layer (not provided by Zoomies).
+    - Tickets do not survive server restarts unless serialized by the caller.
+    - The caller is responsible for enforcing ticket lifetime and single-use
+      semantics to prevent replay attacks.
     """
 
     ticket: bytes
@@ -403,7 +415,7 @@ class QuicTlsContext:
                     )
                 else:
                     break
-            except ValueError, BufferReadError:
+            except (ValueError, BufferReadError):
                 if self._state == TlsHandshakeState.START:
                     self._state = TlsHandshakeState.CLIENT_HELLO_RECEIVED
                 else:
@@ -618,6 +630,11 @@ class QuicTlsContext:
 
         Returns (nst_message_bytes, session_ticket).
         Call after handshake is complete.
+
+        .. warning::
+            The returned ``SessionTicket`` contains the resumption secret in
+            plaintext. It is only valid for this server process. See
+            ``SessionTicket`` class docstring for multi-instance limitations.
         """
         if self._resumption_secret is None:
             raise RuntimeError("Handshake not complete — no resumption secret")
@@ -985,6 +1002,21 @@ class QuicClientTlsContext:
             else:
                 break
 
+        # After handshake completes, parse any NewSessionTicket messages
+        tickets: list[SessionTicket] = []
+        if self._state == ClientTlsState.HANDSHAKE_COMPLETE:
+            while len(self._receive_buffer) >= 4:
+                nst_type = self._receive_buffer[0]
+                nst_len = int.from_bytes(self._receive_buffer[1:4], "big")
+                nst_total = 4 + nst_len
+                if len(self._receive_buffer) < nst_total:
+                    break
+                nst_msg = self._receive_buffer[:nst_total]
+                if nst_type != HANDSHAKE_NEW_SESSION_TICKET:
+                    break  # Not a NST — leave in buffer for future handling
+                self._receive_buffer = self._receive_buffer[nst_total:]
+                tickets.append(self.receive_new_session_ticket(nst_msg))
+
         return TlsHandshakeResult(
             state=TlsHandshakeState.HANDSHAKE_COMPLETE
             if self._state == ClientTlsState.HANDSHAKE_COMPLETE
@@ -994,6 +1026,7 @@ class QuicClientTlsContext:
             data_to_send=to_send,
             handshake_secret=self._handshake_secret,
             traffic_secret=self._traffic_secret,
+            session_tickets=tuple(tickets),
             is_psk=self._is_psk,
             early_secret=self._early_secret,
             client_hello_hash=self._client_hello_hash,
@@ -1078,7 +1111,7 @@ class QuicClientTlsContext:
                 )
                 verified = True
                 break
-            except InvalidSignature, ValueError:
+            except (InvalidSignature, ValueError):
                 continue
         if not verified:
             raise ValueError("Server certificate verification failed")

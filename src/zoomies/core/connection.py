@@ -22,6 +22,8 @@ from zoomies.events import (
     DatagramReceived,
     DecryptionFailed,
     HandshakeComplete,
+    NewSessionTicket,
+    PacketDropped,
     QuicEvent,
     RetryReceived,
     StopSendingReceived,
@@ -367,6 +369,7 @@ class QuicConnection:
             self._last_activity = now
 
         if len(data) < 7:
+            events.append(PacketDropped(reason="datagram_too_short"))
             return events
 
         try:
@@ -423,7 +426,7 @@ class QuicConnection:
             if handler is not None and header.token:
                 odcid = handler.validate_token(header.token, self._datagram_addr)
                 if odcid is None:
-                    # Invalid token — drop packet silently
+                    events.append(PacketDropped(reason="invalid_retry_token"))
                     return
                 self._original_destination_cid = odcid
                 self._address_validated = True
@@ -445,6 +448,7 @@ class QuicConnection:
                 self._tls_ctx.accept_early_data = self._check_zero_rtt_policy()
 
         if not self._initial_crypto:
+            events.append(PacketDropped(reason="no_initial_crypto_server"))
             return
 
         try:
@@ -498,6 +502,7 @@ class QuicConnection:
     ) -> None:
         """Client: handle server's Initial packet (ServerHello in CRYPTO)."""
         if not self._initial_crypto:
+            events.append(PacketDropped(reason="no_initial_crypto_client"))
             return
         # Server may use a different source CID than what we sent to
         if self._state == ConnectionState.INITIAL:
@@ -521,11 +526,14 @@ class QuicConnection:
     def _handle_retry(self, header: LongHeader, events: list[QuicEvent]) -> None:
         """Client: handle Retry packet from server."""
         if not self._is_client:
+            events.append(PacketDropped(reason="retry_on_server"))
             return
         # RFC 9000 §17.2.5.2: client MUST accept only one Retry per connection
         if self._retry_received:
+            events.append(PacketDropped(reason="retry_already_received"))
             return
         if self._state != ConnectionState.INITIAL:
+            events.append(PacketDropped(reason="retry_wrong_state"))
             return
 
         # Validate integrity tag (RFC 9001 §5.8)
@@ -542,7 +550,7 @@ class QuicConnection:
         )
         expected_tag = get_retry_integrity_tag(packet_without_tag, self._peer_cid, header.version)
         if header.integrity_tag != expected_tag:
-            # Invalid integrity tag — drop silently
+            events.append(PacketDropped(reason="invalid_retry_integrity_tag"))
             return
 
         self._retry_received = True
@@ -577,7 +585,11 @@ class QuicConnection:
         self, data: bytes, buf: Buffer, header: LongHeader, events: list[QuicEvent]
     ) -> None:
         """Server: handle 0-RTT packet containing early data."""
-        if self._is_client or not self._zero_rtt_crypto:
+        if self._is_client:
+            events.append(PacketDropped(reason="0rtt_received_by_client"))
+            return
+        if not self._zero_rtt_crypto:
+            events.append(PacketDropped(reason="no_0rtt_crypto"))
             return
         encrypted_offset = buf.tell()
         try:
@@ -597,6 +609,7 @@ class QuicConnection:
     ) -> None:
         """Handle Handshake packet."""
         if not self._handshake_crypto:
+            events.append(PacketDropped(reason="no_handshake_crypto"))
             return
         encrypted_offset = buf.tell()
         try:
@@ -619,8 +632,10 @@ class QuicConnection:
         """Handle Short header (1-RTT)."""
         # Client may receive 1-RTT packets (with HANDSHAKE_DONE) while still in HANDSHAKE state
         if not self._one_rtt_crypto:
+            events.append(PacketDropped(reason="no_1rtt_crypto"))
             return
         if self._state not in (ConnectionState.ONE_RTT, ConnectionState.HANDSHAKE):
+            events.append(PacketDropped(reason="short_header_wrong_state"))
             return
         encrypted_offset = buf.tell()
         try:
@@ -796,6 +811,8 @@ class QuicConnection:
             self._one_rtt_crypto = CryptoPair()
             self._one_rtt_crypto.setup_1rtt(result.traffic_secret, is_client=True)
             # Client doesn't emit HandshakeComplete yet — wait for HANDSHAKE_DONE
+        for ticket in result.session_tickets:
+            events.append(NewSessionTicket(ticket=ticket))
 
     def _parse_payload_frames(
         self,
@@ -899,15 +916,17 @@ class QuicConnection:
                         )
                 else:
                     # Unknown frame type — skip per RFC 9000 §19
-                    buf.pull_uint_var()  # consume the frame type varint
+                    frame_type = buf.pull_uint_var()
                     # Best effort: try to skip the frame body if it has a length prefix
                     # If not, we have to break (can't determine frame size)
                     try:
                         frame_len = buf.pull_uint_var()
                         buf.pull_bytes(frame_len)
-                    except ValueError, BufferReadError:
+                        events.append(PacketDropped(reason="unknown_frame_skipped"))
+                    except (ValueError, BufferReadError):
+                        events.append(PacketDropped(reason="unknown_frame_no_length"))
                         break
-            except ValueError, BufferReadError:
+            except (ValueError, BufferReadError):
                 break
 
     def _process_ack(self, ack: AckFrame) -> None:
@@ -1504,7 +1523,20 @@ class QuicConnection:
         return self._tls_ctx.generate_session_ticket()
 
     def receive_new_session_ticket(self, data: bytes) -> SessionTicket:
-        """Client: parse a NewSessionTicket message. Returns a SessionTicket."""
+        """Client: parse a NewSessionTicket message. Returns a SessionTicket.
+
+        .. deprecated::
+            NewSessionTicket events are now emitted automatically from
+            ``datagram_received()``. This method will be removed in a future release.
+        """
+        import warnings
+
+        warnings.warn(
+            "receive_new_session_ticket() is deprecated; "
+            "NewSessionTicket events are now emitted from datagram_received()",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         if not self._client_tls_ctx:
             raise RuntimeError("No client TLS context")
         return self._client_tls_ctx.receive_new_session_ticket(data)

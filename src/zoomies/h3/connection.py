@@ -96,18 +96,35 @@ class H3Connection:
         self,
         sender: H3StreamSender | None = None,
         *,
+        is_client: bool = True,
         qpack_max_table_capacity: int = 0,
         qpack_blocked_streams: int = 0,
         encoder_stream_id: int | None = None,
     ) -> None:
         self._stream_buffers: dict[int, bytearray] = {}
         self._sender = sender
+        self._is_client = is_client
         self._qpack_max_table_capacity = qpack_max_table_capacity
         self._qpack_blocked_streams = qpack_blocked_streams
         self._peer_settings: dict[int, int] | None = None
         self._settings_sent = False
-        self._encoder_stream_id = encoder_stream_id
         self._encoder_stream_opened = False
+        # Unidirectional stream ID allocation: client starts at 2, server at 3
+        self._next_uni_stream_id = 2 if is_client else 3
+
+        if encoder_stream_id is not None:
+            import warnings
+
+            warnings.warn(
+                "encoder_stream_id is deprecated; H3Connection auto-allocates",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            self._encoder_stream_id = encoder_stream_id
+        elif qpack_max_table_capacity > 0:
+            self._encoder_stream_id = self._alloc_uni_stream_id()
+        else:
+            self._encoder_stream_id = None
 
         # Uni stream type tracking: stream_id -> stream_type
         self._uni_stream_types: dict[int, int] = {}
@@ -124,6 +141,12 @@ class H3Connection:
         else:
             self._encoder = None
             self._decoder = None
+
+    def _alloc_uni_stream_id(self) -> int:
+        """Allocate next unidirectional stream ID (client: 2,6,10; server: 3,7,11)."""
+        sid = self._next_uni_stream_id
+        self._next_uni_stream_id += 4
+        return sid
 
     @property
     def encoder(self) -> QpackEncoder | None:
