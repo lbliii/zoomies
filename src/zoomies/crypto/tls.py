@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 
 from cryptography import x509
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives import hashes, hmac, serialization
 from cryptography.hazmat.primitives.asymmetric import ec, x25519
 from cryptography.hazmat.primitives.serialization import Encoding
@@ -1077,7 +1078,7 @@ class QuicClientTlsContext:
                 )
                 verified = True
                 break
-            except Exception:
+            except InvalidSignature, ValueError:
                 continue
         if not verified:
             raise ValueError("Server certificate verification failed")

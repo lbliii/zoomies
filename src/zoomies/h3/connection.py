@@ -98,6 +98,7 @@ class H3Connection:
         *,
         qpack_max_table_capacity: int = 0,
         qpack_blocked_streams: int = 0,
+        encoder_stream_id: int | None = None,
     ) -> None:
         self._stream_buffers: dict[int, bytearray] = {}
         self._sender = sender
@@ -105,6 +106,8 @@ class H3Connection:
         self._qpack_blocked_streams = qpack_blocked_streams
         self._peer_settings: dict[int, int] | None = None
         self._settings_sent = False
+        self._encoder_stream_id = encoder_stream_id
+        self._encoder_stream_opened = False
 
         # Uni stream type tracking: stream_id -> stream_type
         self._uni_stream_types: dict[int, int] = {}
@@ -151,7 +154,7 @@ class H3Connection:
         type prefix (varint 0x00).
         """
         if self._settings_sent:
-            return None
+            raise RuntimeError("settings_data() already called")
         self._settings_sent = True
         settings = self.local_settings()
         payload = encode_settings(settings)
@@ -180,7 +183,7 @@ class H3Connection:
     def handle_event(self, event: QuicEvent) -> list[H3Event]:
         """Process QUIC event; returns H3 events for StreamDataReceived only."""
         if isinstance(event, StreamDataReceived):
-            return self.stream_data_received(
+            return self._stream_data_received(
                 event.stream_id,
                 event.data,
                 event.end_stream,
@@ -201,8 +204,14 @@ class H3Connection:
         if self._encoder is not None:
             payload = self._encoder.encode_from_bytes(headers)
             enc_data = self._encoder.encoder_stream_data()
-            if enc_data:
-                self._sender.send_stream_data(H3_STREAM_TYPE_ENCODER, enc_data, False)
+            if enc_data and self._encoder_stream_id is not None:
+                if not self._encoder_stream_opened:
+                    # Prepend stream type varint on first use
+                    prefix_buf = Buffer()
+                    push_varint(prefix_buf, H3_STREAM_TYPE_ENCODER)
+                    enc_data = prefix_buf.data + enc_data
+                    self._encoder_stream_opened = True
+                self._sender.send_stream_data(self._encoder_stream_id, enc_data, False)
         else:
             payload = encode_headers_from_bytes(headers)
 
@@ -233,7 +242,29 @@ class H3Connection:
         end_stream: bool,
         is_0rtt: bool = False,
     ) -> list[H3Event]:
-        """Process stream data; returns H3 events."""
+        """Process stream data; returns H3 events.
+
+        .. deprecated::
+            Use :meth:`handle_event` instead. This method will be removed
+            in a future release.
+        """
+        import warnings
+
+        warnings.warn(
+            "stream_data_received() is deprecated, use handle_event() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        return self._stream_data_received(stream_id, data, end_stream, is_0rtt=is_0rtt)
+
+    def _stream_data_received(
+        self,
+        stream_id: int,
+        data: bytes,
+        end_stream: bool,
+        is_0rtt: bool = False,
+    ) -> list[H3Event]:
+        """Process stream data; returns H3 events (internal)."""
         events: list[H3Event] = []
         self._stream_buffers.setdefault(stream_id, bytearray()).extend(data)
         buf = self._stream_buffers[stream_id]

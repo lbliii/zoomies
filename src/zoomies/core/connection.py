@@ -13,7 +13,7 @@ from zoomies.core.configuration import QuicConfiguration
 from zoomies.core.stream import Stream
 from zoomies.crypto import CryptoPair, QuicClientTlsContext, QuicTlsContext
 from zoomies.crypto.tls import ClientTlsState, SessionTicket
-from zoomies.encoding import Buffer
+from zoomies.encoding import Buffer, BufferReadError
 from zoomies.events import (
     ConnectionClosed,
     ConnectionIdIssued,
@@ -155,6 +155,7 @@ class QuicConnection:
         self._handshake_recv_pn = 0
         self._one_rtt_recv_pn = 0
         self._stream_send_queue: list[tuple[int, bytes, bool]] = []
+        self._stream_send_queue_bytes: int = 0  # total bytes queued
         self._zero_rtt_stream_queue: list[tuple[int, bytes, bool]] = []
         self._zero_rtt_accepted: bool | None = None  # None=unknown, True/False after EE
         # Separate CRYPTO buffers per encryption level (RFC 9000 §19.6)
@@ -200,8 +201,14 @@ class QuicConnection:
         self._retry_sent = False  # Server: have we sent a Retry?
         self._retry_received = False  # Client: have we received a Retry?
         self._client_hello_bytes: bytes | None = None  # Cached for Retry resend
+        # CRYPTO send buffers for retransmission (parallel to StreamSendState._send_buffer)
+        self._initial_crypto_send_buf: bytearray = bytearray()
+        self._initial_crypto_send_offset: int = 0  # base offset of buffer
+        self._handshake_crypto_send_buf: bytearray = bytearray()
+        self._handshake_crypto_send_offset: int = 0
         # Retransmission queues for lost frames
-        self._crypto_retransmit: list[tuple[int, bytes]] = []  # (offset, data)
+        self._crypto_retransmit_initial: list[tuple[int, int]] = []  # (offset, length)
+        self._crypto_retransmit_handshake: list[tuple[int, int]] = []
         self._handshake_done_pending = False
         self._probe_needed = False
         # Path validation (RFC 9000 §9)
@@ -281,6 +288,8 @@ class QuicConnection:
             return
         payload_buf = Buffer()
         push_crypto_frame(payload_buf, CryptoFrame(offset=0, data=client_hello))
+        # Store in Initial CRYPTO send buffer for retransmission
+        self._initial_crypto_send_buf.extend(client_hello)
         # Build header first to get its actual size for padding calculation
         pn = self._initial_pn
         # Use a dummy payload length to measure header size (varint length is stable)
@@ -325,6 +334,8 @@ class QuicConnection:
 
         If 0-RTT crypto is available and handshake hasn't completed,
         data is queued for 0-RTT transmission.
+
+        Raises BufferError if the send queue exceeds max_send_queue_bytes.
         """
         if (
             self._is_client
@@ -334,7 +345,13 @@ class QuicConnection:
         ):
             self._zero_rtt_stream_queue.append((stream_id, data, end_stream))
         else:
+            limit = self._config.max_send_queue_bytes
+            if limit > 0 and self._stream_send_queue_bytes + len(data) > limit:
+                raise BufferError(
+                    f"Send queue full ({self._stream_send_queue_bytes} bytes queued, limit {limit})"
+                )
             self._stream_send_queue.append((stream_id, data, end_stream))
+            self._stream_send_queue_bytes += len(data)
 
     def datagram_received(
         self, data: bytes, addr: tuple[str, int], *, now: float = 0.0
@@ -344,11 +361,8 @@ class QuicConnection:
         events.append(DatagramReceived(data=data, addr=addr))
         self._now = now
         self._bytes_received += len(data)
-        self._datagram_addr = addr  # stash for post-decrypt migration check
+        self._datagram_addr = addr  # stash for post-decrypt validation
 
-        # During handshake, accept addr unconditionally
-        if self._state in (ConnectionState.INITIAL, ConnectionState.HANDSHAKE):
-            self._peer_addr = addr
         if now > 0.0:
             self._last_activity = now
 
@@ -407,7 +421,7 @@ class QuicConnection:
 
             # Retry flow: if handler is configured and token present, validate
             if handler is not None and header.token:
-                odcid = handler.validate_token(header.token, self._peer_addr)
+                odcid = handler.validate_token(header.token, self._datagram_addr)
                 if odcid is None:
                     # Invalid token — drop packet silently
                     return
@@ -437,6 +451,8 @@ class QuicConnection:
             _ph, plain_payload, pn = self._initial_crypto.decrypt_packet(
                 data, encrypted_offset, self._initial_recv_pn
             )
+            # Address authenticated — safe to update peer_addr
+            self._peer_addr = self._datagram_addr
             self._initial_recv_pn = pn + 1
             self._initial_ack_ranges.add(pn)
             self._ack_needed_initial = True
@@ -454,7 +470,7 @@ class QuicConnection:
             return
 
         original_dcid = header.destination_cid
-        token = handler.generate_token(original_dcid, self._peer_addr)
+        token = handler.generate_token(original_dcid, self._datagram_addr)
 
         # Generate a new CID for the Retry packet
         retry_scid = os.urandom(8)
@@ -491,6 +507,8 @@ class QuicConnection:
             _ph, plain_payload, pn = self._initial_crypto.decrypt_packet(
                 data, encrypted_offset, self._initial_recv_pn
             )
+            # Address authenticated — safe to update peer_addr
+            self._peer_addr = self._datagram_addr
             self._initial_recv_pn = pn + 1
             self._initial_ack_ranges.add(pn)
             self._ack_needed_initial = True
@@ -585,6 +603,8 @@ class QuicConnection:
             _ph, plain_payload, pn = self._handshake_crypto.decrypt_packet(
                 data, encrypted_offset, self._handshake_recv_pn
             )
+            # Address authenticated — safe to update peer_addr
+            self._peer_addr = self._datagram_addr
             self._handshake_recv_pn = pn + 1
             self._handshake_ack_ranges.add(pn)
             self._ack_needed_handshake = True
@@ -604,7 +624,7 @@ class QuicConnection:
             return
         encrypted_offset = buf.tell()
         try:
-            _ph, plain_payload, pn = self._one_rtt_crypto.decrypt_packet(
+            _ph, plain_payload, pn, _kp = self._one_rtt_crypto.decrypt_packet_with_phase(
                 data, encrypted_offset, self._one_rtt_recv_pn
             )
             self._one_rtt_recv_pn = pn + 1
@@ -878,8 +898,16 @@ class QuicConnection:
                             )
                         )
                 else:
-                    break
-            except ValueError:
+                    # Unknown frame type — skip per RFC 9000 §19
+                    buf.pull_uint_var()  # consume the frame type varint
+                    # Best effort: try to skip the frame body if it has a length prefix
+                    # If not, we have to break (can't determine frame size)
+                    try:
+                        frame_len = buf.pull_uint_var()
+                        buf.pull_bytes(frame_len)
+                    except ValueError, BufferReadError:
+                        break
+            except ValueError, BufferReadError:
                 break
 
     def _process_ack(self, ack: AckFrame) -> None:
@@ -920,27 +948,57 @@ class QuicConnection:
         )
         if lost:
             self._cc.on_packets_lost(lost, self._now)
-            self._retransmit_lost(lost)
+            self._retransmit_lost(lost, space)
 
-    def _retransmit_lost(self, lost: list[SentPacket]) -> None:
+    def _retransmit_lost(self, lost: list[SentPacket], space: PacketSpace) -> None:
         """Re-queue retransmittable frames from lost packets."""
         for pkt in lost:
             for frame in pkt.frames:
                 if isinstance(frame, SentCryptoFrame):
-                    self._crypto_retransmit.append(
-                        (frame.offset, b"")  # CRYPTO data tracked by TLS layer
-                    )
+                    # Route to the correct level's retransmit queue
+                    if space is self._initial_space:
+                        self._crypto_retransmit_initial.append((frame.offset, frame.length))
+                    else:
+                        self._crypto_retransmit_handshake.append((frame.offset, frame.length))
                 elif isinstance(frame, SentStreamFrame):
                     # Retrieve original data from stream send buffer
                     stream = self._get_or_create_stream(StreamId(frame.stream_id))
                     data = stream._send.get_data(frame.offset, frame.length)
                     if data:
                         self._stream_send_queue.append((frame.stream_id, data, frame.fin))
+                        self._stream_send_queue_bytes += len(data)
                 elif isinstance(frame, SentHandshakeDoneFrame):
                     self._handshake_done_pending = True
                 # SentAckFrame: NOT retransmitted (RFC 9002)
                 # SentPingFrame: NOT retransmitted
                 # SentNewConnectionIdFrame: NOT retransmitted (idempotent)
+
+    def _get_crypto_send_data(self, offset: int, length: int, *, level: str) -> bytes | None:
+        """Retrieve CRYPTO data from the send buffer for retransmission."""
+        if level == "initial":
+            buf = self._initial_crypto_send_buf
+            base = self._initial_crypto_send_offset
+        else:
+            buf = self._handshake_crypto_send_buf
+            base = self._handshake_crypto_send_offset
+        buf_offset = offset - base
+        if buf_offset < 0 or buf_offset + length > len(buf):
+            return None
+        return bytes(buf[buf_offset : buf_offset + length])
+
+    def _drain_crypto_retransmit(self) -> None:
+        """Re-queue lost CRYPTO frames from send buffers."""
+        for offset, length in self._crypto_retransmit_initial:
+            data = self._get_crypto_send_data(offset, length, level="initial")
+            if data and self._initial_crypto:
+                self._queue_initial_crypto_response(data)
+        self._crypto_retransmit_initial.clear()
+
+        for offset, length in self._crypto_retransmit_handshake:
+            data = self._get_crypto_send_data(offset, length, level="handshake")
+            if data and self._handshake_crypto:
+                self._queue_handshake_response(data)
+        self._crypto_retransmit_handshake.clear()
 
     def _queue_new_connection_id(self, events: list[QuicEvent], retire_prior_to: int = 0) -> None:
         """Queue 1-RTT packet with NEW_CONNECTION_ID for connection migration."""
@@ -1045,6 +1103,8 @@ class QuicConnection:
         """Queue Initial packet with CRYPTO frame (e.g., ServerHello)."""
         if not self._initial_crypto or not self._our_cid or not self._peer_cid:
             return
+        # Store in Initial CRYPTO send buffer for retransmission
+        self._initial_crypto_send_buf.extend(tls_data)
         payload_buf = Buffer()
         push_crypto_frame(payload_buf, CryptoFrame(offset=0, data=tls_data))
         plain_payload = payload_buf.data
@@ -1116,13 +1176,17 @@ class QuicConnection:
         """Queue Handshake packet(s) with TLS data in CRYPTO frames."""
         if not self._handshake_crypto or not self._our_cid or not self._peer_cid:
             return
+        # Store in Handshake CRYPTO send buffer for retransmission
+        hs_base = len(self._handshake_crypto_send_buf)
+        self._handshake_crypto_send_buf.extend(tls_data)
         offset = 0
         while offset < len(tls_data):
             chunk = tls_data[offset : offset + MTU - 100]
             if not chunk:
                 break
+            crypto_offset = hs_base + offset
             payload_buf = Buffer()
-            push_crypto_frame(payload_buf, CryptoFrame(offset=offset, data=chunk))
+            push_crypto_frame(payload_buf, CryptoFrame(offset=crypto_offset, data=chunk))
             plain_payload = payload_buf.data
             pn = self._handshake_pn
             pn_bytes = pn.to_bytes(PN_SIZE, "big")
@@ -1144,7 +1208,7 @@ class QuicConnection:
                 sent_bytes=len(encrypted),
                 ack_eliciting=True,
                 in_flight=True,
-                frames=(SentCryptoFrame(offset=offset, length=len(chunk)),),
+                frames=(SentCryptoFrame(offset=crypto_offset, length=len(chunk)),),
             )
             self._handshake_pn += 1
             offset += len(chunk)
@@ -1161,7 +1225,7 @@ class QuicConnection:
         push_ack_frame(payload_buf, ack)
         plain_payload = payload_buf.data
         header_buf = Buffer()
-        push_short_header(header_buf, self._peer_cid, pn)
+        push_short_header(header_buf, self._peer_cid, pn, key_phase=crypto.key_phase)
         plain_header = header_buf.data
         encrypted = crypto.encrypt_packet(plain_header, plain_payload, pn)
         # ACK-only packets are NOT ack-eliciting and NOT in-flight (RFC 9002)
@@ -1180,6 +1244,12 @@ class QuicConnection:
         if now > 0.0:
             self._now = now
         out, self._send_queue = self._send_queue, []
+
+        # Drain CRYPTO retransmission queues
+        if self._crypto_retransmit_initial or self._crypto_retransmit_handshake:
+            self._drain_crypto_retransmit()
+            out.extend(self._send_queue)
+            self._send_queue = []
 
         # Generate pending ACKs
         if (
@@ -1366,6 +1436,7 @@ class QuicConnection:
             packets.append(self._encrypt_short_packet(payload_buf.data, tuple(current_frames)))
 
         self._stream_send_queue = deferred
+        self._stream_send_queue_bytes = sum(len(d) for _, d, _ in deferred)
         return packets
 
     def _optimal_pn_length(self) -> int:
@@ -1396,7 +1467,13 @@ class QuicConnection:
         pn = self._one_rtt_pn
         pn_len = self._optimal_pn_length()
         header_buf = Buffer()
-        push_short_header(header_buf, self._peer_cid, pn, pn_len=pn_len)
+        push_short_header(
+            header_buf,
+            self._peer_cid,
+            pn,
+            pn_len=pn_len,
+            key_phase=self._one_rtt_crypto.key_phase,
+        )
         plain_header = header_buf.data
         encrypted = self._one_rtt_crypto.encrypt_packet(plain_header, plain_payload, pn)
         ack_eliciting = any(not isinstance(f, SentAckFrame) for f in frames) if frames else True

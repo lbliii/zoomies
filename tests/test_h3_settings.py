@@ -1,5 +1,7 @@
 """Tests for H3 SETTINGS frame and QPACK capacity negotiation."""
 
+import pytest
+
 from zoomies.encoding import Buffer
 from zoomies.encoding.varint import pull_varint
 from zoomies.h3.connection import (
@@ -63,12 +65,12 @@ class TestH3ConnectionSettings:
         frame_type = pull_varint(buf)
         assert frame_type == 0x04
 
-    def test_settings_data_only_sent_once(self) -> None:
+    def test_settings_data_raises_on_second_call(self) -> None:
         conn = H3Connection(qpack_max_table_capacity=4096)
         first = conn.settings_data()
-        second = conn.settings_data()
         assert first is not None
-        assert second is None
+        with pytest.raises(RuntimeError, match="settings_data\\(\\) already called"):
+            conn.settings_data()
 
     def test_settings_data_empty_when_no_capacity(self) -> None:
         """Even with no QPACK capacity, settings_data returns valid frame."""
@@ -126,7 +128,7 @@ class TestPeerSettingsNegotiation:
         payload = encode_settings(settings)
         frame = _encode_frame(H3_FRAME_SETTINGS, payload)
 
-        events = conn.stream_data_received(stream_id=2, data=frame, end_stream=False)
+        events = conn._stream_data_received(stream_id=2, data=frame, end_stream=False)
         # SETTINGS doesn't produce H3 events
         assert len(events) == 0
         # But peer settings should be applied

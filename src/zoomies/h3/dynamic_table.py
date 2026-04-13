@@ -23,6 +23,9 @@ class DynamicTable:
         self._capacity = capacity
         self._size = 0
         self._insert_count = 0  # absolute index counter
+        # O(1) lookup indices keyed by absolute index (never shifts)
+        self._nv_index: dict[tuple[str, str], int] = {}  # (name, value) -> abs_idx
+        self._name_index: dict[str, int] = {}  # name -> abs_idx (most recent)
 
     @property
     def capacity(self) -> int:
@@ -50,6 +53,7 @@ class DynamicTable:
         entry_sz = _entry_size(name, value)
         if entry_sz > self._capacity:
             # Entry too large — evict everything, don't insert (RFC 9204 §3.2.2)
+            self._clear_indices()
             self._entries.clear()
             self._size = 0
             self._insert_count += 1
@@ -57,13 +61,16 @@ class DynamicTable:
 
         # Evict oldest entries until there's room
         while self._size + entry_sz > self._capacity and self._entries:
-            _, _, old_sz = self._entries.pop()
-            self._size -= old_sz
+            self._evict_one()
 
+        abs_idx = self._insert_count
         self._entries.insert(0, (name, value, entry_sz))
         self._size += entry_sz
         self._insert_count += 1
-        return self._insert_count - 1
+        # Update O(1) indices
+        self._nv_index[(name, value)] = abs_idx
+        self._name_index[name] = abs_idx
+        return abs_idx
 
     def get(self, relative_index: int) -> tuple[str, str]:
         """Get entry by relative index (0 = newest)."""
@@ -83,15 +90,17 @@ class DynamicTable:
 
     def lookup(self, name: str, value: str) -> tuple[int, bool] | None:
         """Find entry by name+value. Returns (relative_index, exact_match) or None."""
-        name_match: int | None = None
-        for i, (n, v, _) in enumerate(self._entries):
-            if n == name:
-                if v == value:
-                    return (i, True)
-                if name_match is None:
-                    name_match = i
-        if name_match is not None:
-            return (name_match, False)
+        abs_idx = self._nv_index.get((name, value))
+        if abs_idx is not None:
+            rel = self._insert_count - 1 - abs_idx
+            if 0 <= rel < len(self._entries):
+                return (rel, True)
+        # Name-only match
+        abs_idx = self._name_index.get(name)
+        if abs_idx is not None:
+            rel = self._insert_count - 1 - abs_idx
+            if 0 <= rel < len(self._entries):
+                return (rel, False)
         return None
 
     def lookup_absolute(self, name: str, value: str) -> tuple[int, bool] | None:
@@ -104,9 +113,11 @@ class DynamicTable:
 
     def lookup_name(self, name: str) -> int | None:
         """Find first entry with matching name. Returns relative index or None."""
-        for i, (n, _, _) in enumerate(self._entries):
-            if n == name:
-                return i
+        abs_idx = self._name_index.get(name)
+        if abs_idx is not None:
+            rel = self._insert_count - 1 - abs_idx
+            if 0 <= rel < len(self._entries):
+                return rel
         return None
 
     def lookup_name_absolute(self, name: str) -> int | None:
@@ -116,8 +127,28 @@ class DynamicTable:
             return None
         return self.relative_to_absolute(rel)
 
+    def _evict_one(self) -> None:
+        """Evict the oldest (last) entry."""
+        name, value, old_sz = self._entries.pop()
+        self._size -= old_sz
+        # Clean up index if this was the indexed entry
+        if self._nv_index.get((name, value)) is not None:
+            abs_idx = self._nv_index[(name, value)]
+            rel = self._insert_count - 1 - abs_idx
+            if rel >= len(self._entries):
+                del self._nv_index[(name, value)]
+        if self._name_index.get(name) is not None:
+            abs_idx = self._name_index[name]
+            rel = self._insert_count - 1 - abs_idx
+            if rel >= len(self._entries):
+                del self._name_index[name]
+
+    def _clear_indices(self) -> None:
+        """Clear all O(1) lookup indices."""
+        self._nv_index.clear()
+        self._name_index.clear()
+
     def _evict(self) -> None:
         """Evict oldest entries until size <= capacity."""
         while self._size > self._capacity and self._entries:
-            _, _, old_sz = self._entries.pop()
-            self._size -= old_sz
+            self._evict_one()

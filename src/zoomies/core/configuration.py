@@ -48,6 +48,16 @@ class QuicConfiguration:
     max_data: int = 0
     max_stream_data: int = 0
     idle_timeout: float = 30.0
+    max_send_queue_bytes: int = 16 * 1024 * 1024  # 16 MB default
     zero_rtt_policy: ZeroRttPolicy | None = None
     session_ticket: SessionTicket | None = None
     retry_token_handler: RetryTokenHandler | None = None
+
+    def __post_init__(self) -> None:
+        if not self.is_client:
+            if not self.certificate:
+                raise ValueError("Server QuicConfiguration requires non-empty 'certificate'")
+            if not self.private_key:
+                raise ValueError("Server QuicConfiguration requires non-empty 'private_key'")
+        if self.is_client and self.verify_mode and self.ca_certs is None:
+            raise ValueError("Client QuicConfiguration with verify_mode=True requires 'ca_certs'")

@@ -17,65 +17,107 @@ from zoomies.h3.qpack_instructions import (
     encode_set_capacity,
 )
 
-# RFC 9204 Appendix A: Static table (subset for MVP)
+# RFC 9204 Appendix A: Static table (full 99 entries)
 STATIC_TABLE: list[tuple[str, str]] = [
-    (":authority", ""),
-    (":path", "/"),
-    (":path", "/index.html"),
-    ("age", "0"),
-    ("content-disposition", ""),
-    ("content-length", "0"),
-    ("cookie", ""),
-    ("date", ""),
-    ("etag", ""),
-    ("if-modified-since", ""),
-    ("if-none-match", ""),
-    ("last-modified", ""),
-    ("link", ""),
-    ("location", ""),
-    ("referer", ""),
-    ("set-cookie", ""),
-    (":method", "CONNECT"),
-    (":method", "DELETE"),
-    (":method", "GET"),
-    (":method", "HEAD"),
-    (":method", "OPTIONS"),
-    (":method", "POST"),
-    (":method", "PUT"),
-    (":scheme", "http"),
-    (":scheme", "https"),
-    (":status", "103"),
-    (":status", "200"),
-    (":status", "304"),
-    (":status", "404"),
-    (":status", "500"),
-    ("accept", "*/*"),
-    ("accept", "application/dns-message"),
-    ("accept-encoding", "gzip, deflate, br"),
-    ("accept-ranges", "bytes"),
-    ("access-control-allow-headers", "cache-control"),
-    ("access-control-allow-origin", "*"),
-    ("cache-control", "max-age=0"),
-    ("cache-control", "max-age=2592000"),
-    ("cache-control", "max-age=604800"),
-    ("cache-control", "no-cache"),
-    ("content-encoding", "br"),
-    ("content-encoding", "gzip"),
-    ("content-type", "application/dns-message"),
-    ("content-type", "application/javascript"),
-    ("content-type", "application/json"),
-    ("content-type", "application/x-www-form-urlencoded"),
-    ("content-type", "image/gif"),
-    ("content-type", "image/jpeg"),
-    ("content-type", "image/png"),
-    ("content-type", "text/css"),
-    ("content-type", "text/html; charset=utf-8"),
-    ("content-type", "text/plain"),
-    ("content-type", "text/plain;charset=utf-8"),
-    ("range", "bytes=0-"),
-    ("strict-transport-security", "max-age=31536000"),
-    ("upgrade-insecure-requests", "1"),
-    ("user-agent", ""),
+    (":authority", ""),  # 0
+    (":path", "/"),  # 1
+    ("age", "0"),  # 2
+    ("content-disposition", ""),  # 3
+    ("content-length", "0"),  # 4
+    ("cookie", ""),  # 5
+    ("date", ""),  # 6
+    ("etag", ""),  # 7
+    ("if-modified-since", ""),  # 8
+    ("if-none-match", ""),  # 9
+    ("last-modified", ""),  # 10
+    ("link", ""),  # 11
+    ("location", ""),  # 12
+    ("referer", ""),  # 13
+    ("set-cookie", ""),  # 14
+    (":method", "CONNECT"),  # 15
+    (":method", "DELETE"),  # 16
+    (":method", "GET"),  # 17
+    (":method", "HEAD"),  # 18
+    (":method", "OPTIONS"),  # 19
+    (":method", "POST"),  # 20
+    (":method", "PUT"),  # 21
+    (":scheme", "http"),  # 22
+    (":scheme", "https"),  # 23
+    (":status", "103"),  # 24
+    (":status", "200"),  # 25
+    (":status", "304"),  # 26
+    (":status", "404"),  # 27
+    (":status", "500"),  # 28
+    ("accept", "*/*"),  # 29
+    ("accept", "application/dns-message"),  # 30
+    ("accept-encoding", "gzip, deflate, br"),  # 31
+    ("accept-ranges", "bytes"),  # 32
+    ("access-control-allow-headers", "cache-control"),  # 33
+    ("access-control-allow-headers", "content-type"),  # 34
+    ("access-control-allow-origin", "*"),  # 35
+    ("cache-control", "max-age=0"),  # 36
+    ("cache-control", "max-age=2592000"),  # 37
+    ("cache-control", "max-age=604800"),  # 38
+    ("cache-control", "no-cache"),  # 39
+    ("cache-control", "no-store"),  # 40
+    ("cache-control", "public, max-age=31536000"),  # 41
+    ("content-encoding", "br"),  # 42
+    ("content-encoding", "gzip"),  # 43
+    ("content-type", "application/dns-message"),  # 44
+    ("content-type", "application/javascript"),  # 45
+    ("content-type", "application/json"),  # 46
+    ("content-type", "application/x-www-form-urlencoded"),  # 47
+    ("content-type", "image/gif"),  # 48
+    ("content-type", "image/jpeg"),  # 49
+    ("content-type", "image/png"),  # 50
+    ("content-type", "text/css"),  # 51
+    ("content-type", "text/html; charset=utf-8"),  # 52
+    ("content-type", "text/plain"),  # 53
+    ("content-type", "text/plain;charset=utf-8"),  # 54
+    ("range", "bytes=0-"),  # 55
+    ("strict-transport-security", "max-age=31536000"),  # 56
+    ("strict-transport-security", "max-age=31536000; includesubdomains"),  # 57
+    ("strict-transport-security", "max-age=31536000; includesubdomains; preload"),  # 58
+    ("vary", "accept-encoding"),  # 59
+    ("vary", "origin"),  # 60
+    ("x-content-type-options", "nosniff"),  # 61
+    ("x-xss-protection", "1; mode=block"),  # 62
+    (":status", "100"),  # 63
+    (":status", "204"),  # 64
+    (":status", "206"),  # 65
+    (":status", "302"),  # 66
+    (":status", "400"),  # 67
+    (":status", "403"),  # 68
+    (":status", "421"),  # 69
+    (":status", "425"),  # 70
+    (":status", "503"),  # 71
+    ("accept-language", ""),  # 72
+    ("access-control-allow-credentials", "FALSE"),  # 73
+    ("access-control-allow-credentials", "TRUE"),  # 74
+    ("access-control-allow-methods", "GET"),  # 75
+    ("access-control-allow-methods", "GET, POST, OPTIONS"),  # 76
+    ("access-control-allow-methods", "OPTIONS"),  # 77
+    ("access-control-expose-headers", "content-length"),  # 78
+    ("access-control-request-headers", "content-type"),  # 79
+    ("access-control-request-method", "GET"),  # 80
+    ("access-control-request-method", "POST"),  # 81
+    ("alt-svc", "clear"),  # 82
+    ("authorization", ""),  # 83
+    ("content-security-policy", "script-src 'none'; object-src 'none'; base-uri 'none'"),  # 84
+    ("early-data", "1"),  # 85
+    ("expect-ct", ""),  # 86
+    ("forwarded", ""),  # 87
+    ("if-range", ""),  # 88
+    ("origin", ""),  # 89
+    ("purpose", "prefetch"),  # 90
+    ("server", ""),  # 91
+    ("timing-allow-origin", "*"),  # 92
+    ("upgrade-insecure-requests", "1"),  # 93
+    ("user-agent", ""),  # 94
+    ("x-forwarded-for", ""),  # 95
+    ("x-frame-options", "deny"),  # 96
+    ("x-frame-options", "sameorigin"),  # 97
+    (":path", "/index.html"),  # 98
 ]
 
 
@@ -110,13 +152,18 @@ def _decode_literal(buf: Buffer) -> Header:
     return Header(name=name, value=value)
 
 
+def _encode_indexed_static(buf: Buffer, idx: int) -> None:
+    """Encode indexed static reference (RFC 9204 §4.5.2)."""
+    _push_prefixed_int(buf, 0xC0, 6, idx)
+
+
 def encode_headers(headers: list[Header]) -> bytes:
-    """Encode headers to QPACK format (literal for MVP)."""
+    """Encode headers to QPACK format."""
     buf = Buffer()
     for h in headers:
         idx = _find_static(h.name, h.value)
-        if 0 <= idx < 63:
-            buf.push_uint8(0xC0 | idx)  # indexed static
+        if idx >= 0:
+            _encode_indexed_static(buf, idx)
         else:
             _encode_literal(buf, h.name, h.value)
     return buf.data
@@ -129,8 +176,8 @@ def encode_headers_from_bytes(headers: list[tuple[bytes, bytes]]) -> bytes:
         name_str = n.decode("ascii")
         value_str = v.decode("ascii")
         idx = _find_static(name_str, value_str)
-        if 0 <= idx < 63:
-            buf.push_uint8(0xC0 | idx)
+        if idx >= 0:
+            _encode_indexed_static(buf, idx)
         else:
             buf.push_uint8(0x20)
             push_varint(buf, len(n))
@@ -147,7 +194,7 @@ def decode_headers(data: bytes) -> list[Header]:
     while not buf.eof():
         first = buf.pull_uint8()
         if (first & 0xC0) == 0xC0:
-            idx = first & 0x3F
+            idx = _pull_prefixed_int(buf, first, 6)
             if idx < len(STATIC_TABLE):
                 n, v = STATIC_TABLE[idx]
                 result.append(Header(name=n, value=v))

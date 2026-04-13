@@ -97,14 +97,16 @@ def push_short_header(
     destination_cid: bytes,
     packet_number: int,
     pn_len: int = 4,
+    key_phase: int = 0,
 ) -> None:
     """Push Short header (1-RTT). RFC 9000 17.3.
 
     pn_len: 1, 2, or 4 bytes for packet number.
+    key_phase: current key phase bit (0 or 1).
     """
     if pn_len not in (1, 2, 4):
         raise ValueError("pn_len must be 1, 2, or 4")
-    first = PACKET_FIXED_BIT | (pn_len - 1)
+    first = PACKET_FIXED_BIT | ((key_phase & 1) << 2) | (pn_len - 1)
     buf.push_uint8(first)
     buf.push_bytes(destination_cid)
     buf.push_bytes(packet_number.to_bytes(pn_len, "big"))

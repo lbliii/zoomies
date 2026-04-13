@@ -343,7 +343,7 @@ def test_retransmit_lost_stream_frame() -> None:
             frames=(SentStreamFrame(stream_id=0, offset=0, length=5, fin=False),),
         )
     ]
-    conn._retransmit_lost(lost)
+    conn._retransmit_lost(lost, conn._application_space)
 
     # Should have re-queued the stream data
     assert len(conn._stream_send_queue) == 1
@@ -366,7 +366,7 @@ def test_retransmit_lost_handshake_done() -> None:
             frames=(SentHandshakeDoneFrame(),),
         )
     ]
-    conn._retransmit_lost(lost)
+    conn._retransmit_lost(lost, conn._application_space)
     assert conn._handshake_done_pending is True
 
 
@@ -385,7 +385,7 @@ def test_retransmit_lost_ack_not_retransmitted() -> None:
             frames=(SentAckFrame(),),
         )
     ]
-    conn._retransmit_lost(lost)
+    conn._retransmit_lost(lost, conn._application_space)
     assert len(conn._stream_send_queue) == 0
     assert conn._handshake_done_pending is False
 
@@ -403,9 +403,9 @@ def test_retransmit_lost_crypto_frame() -> None:
             frames=(SentCryptoFrame(offset=0, length=50),),
         )
     ]
-    conn._retransmit_lost(lost)
-    assert len(conn._crypto_retransmit) == 1
-    assert conn._crypto_retransmit[0][0] == 0
+    conn._retransmit_lost(lost, conn._initial_space)
+    assert len(conn._crypto_retransmit_initial) == 1
+    assert conn._crypto_retransmit_initial[0] == (0, 50)
 
 
 # --- Handshake done retransmission via send_datagrams ---
