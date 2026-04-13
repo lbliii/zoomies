@@ -33,7 +33,8 @@ def test_h3_headers_received() -> None:
     conn = H3Connection()
     headers = [Header(name=":method", value="GET"), Header(name=":path", value="/")]
     frame = _make_headers_frame(headers)
-    events = conn._stream_data_received(stream_id=0, data=frame, end_stream=True)
+    event = StreamDataReceived(stream_id=0, data=frame, end_stream=True)
+    events = conn.handle_event(event)
     assert len(events) == 1
     assert isinstance(events[0], H3HeadersReceived)
     assert events[0].stream_id == 0
@@ -46,7 +47,8 @@ def test_h3_data_received() -> None:
     """H3Connection emits H3DataReceived for DATA frame."""
     conn = H3Connection()
     frame = _make_data_frame(b"hello")
-    events = conn._stream_data_received(stream_id=4, data=frame, end_stream=True)
+    event = StreamDataReceived(stream_id=4, data=frame, end_stream=True)
+    events = conn.handle_event(event)
     assert len(events) == 1
     assert isinstance(events[0], H3DataReceived)
     assert events[0].stream_id == 4
@@ -65,7 +67,8 @@ def test_h3_request_parsing() -> None:
     hframe = _make_headers_frame(headers)
     dframe = _make_data_frame(b"")
     data = hframe + dframe
-    events = conn._stream_data_received(stream_id=0, data=data, end_stream=True)
+    event = StreamDataReceived(stream_id=0, data=data, end_stream=True)
+    events = conn.handle_event(event)
     assert any(isinstance(e, H3HeadersReceived) for e in events)
     assert len(events) >= 1
 

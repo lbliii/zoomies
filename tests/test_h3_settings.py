@@ -4,6 +4,7 @@ import pytest
 
 from zoomies.encoding import Buffer
 from zoomies.encoding.varint import pull_varint
+from zoomies.events import StreamDataReceived
 from zoomies.h3.connection import (
     H3_STREAM_TYPE_CONTROL,
     SETTINGS_QPACK_BLOCKED_STREAMS,
@@ -40,12 +41,13 @@ class TestH3ConnectionSettings:
         assert conn.local_settings() == {}
 
     def test_local_settings_with_capacity(self) -> None:
-        conn = H3Connection(qpack_max_table_capacity=4096)
+        conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         settings = conn.local_settings()
         assert settings[SETTINGS_QPACK_MAX_TABLE_CAPACITY] == 4096
 
     def test_local_settings_with_blocked_streams(self) -> None:
         conn = H3Connection(
+            is_client=True,
             qpack_max_table_capacity=4096,
             qpack_blocked_streams=100,
         )
@@ -55,7 +57,7 @@ class TestH3ConnectionSettings:
 
     def test_settings_data_includes_stream_type(self) -> None:
         """settings_data() returns control stream type + SETTINGS frame."""
-        conn = H3Connection(qpack_max_table_capacity=4096)
+        conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         data = conn.settings_data()
         assert data is not None
         buf = Buffer(data=data)
@@ -66,7 +68,7 @@ class TestH3ConnectionSettings:
         assert frame_type == 0x04
 
     def test_settings_data_raises_on_second_call(self) -> None:
-        conn = H3Connection(qpack_max_table_capacity=4096)
+        conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         first = conn.settings_data()
         assert first is not None
         with pytest.raises(RuntimeError, match="settings_data\\(\\) already called"):
@@ -85,35 +87,35 @@ class TestH3ConnectionSettings:
 class TestPeerSettingsNegotiation:
     def test_apply_peer_settings_reduces_capacity(self) -> None:
         """Encoder capacity becomes min(local, peer)."""
-        conn = H3Connection(qpack_max_table_capacity=4096)
+        conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         assert conn.encoder is not None
         conn.apply_peer_settings({SETTINGS_QPACK_MAX_TABLE_CAPACITY: 2048})
         assert conn.encoder.table.capacity == 2048
 
     def test_apply_peer_settings_zero_disables(self) -> None:
         """Peer advertising 0 disables the dynamic table."""
-        conn = H3Connection(qpack_max_table_capacity=4096)
+        conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         assert conn.encoder is not None
         conn.apply_peer_settings({SETTINGS_QPACK_MAX_TABLE_CAPACITY: 0})
         assert conn.encoder.table.capacity == 0
 
     def test_apply_peer_settings_larger_capped(self) -> None:
         """Peer advertising more than local max gets capped."""
-        conn = H3Connection(qpack_max_table_capacity=4096)
+        conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         assert conn.encoder is not None
         conn.apply_peer_settings({SETTINGS_QPACK_MAX_TABLE_CAPACITY: 8192})
         assert conn.encoder.table.capacity == 4096
 
     def test_apply_peer_settings_no_qpack_key(self) -> None:
         """Missing QPACK key means peer doesn't support dynamic table."""
-        conn = H3Connection(qpack_max_table_capacity=4096)
+        conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         assert conn.encoder is not None
         conn.apply_peer_settings({})
         # Encoder capacity stays at 0 since peer didn't advertise
         assert conn.encoder.table.capacity == 0
 
     def test_peer_settings_stored(self) -> None:
-        conn = H3Connection(qpack_max_table_capacity=4096)
+        conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         assert conn.peer_settings is None
         settings = {SETTINGS_QPACK_MAX_TABLE_CAPACITY: 2048}
         conn.apply_peer_settings(settings)
@@ -123,12 +125,13 @@ class TestPeerSettingsNegotiation:
         """SETTINGS frame received on a stream is parsed and applied."""
         from zoomies.h3.connection import H3_FRAME_SETTINGS, _encode_frame
 
-        conn = H3Connection(qpack_max_table_capacity=4096)
+        conn = H3Connection(is_client=True, qpack_max_table_capacity=4096)
         settings = {SETTINGS_QPACK_MAX_TABLE_CAPACITY: 2048}
         payload = encode_settings(settings)
         frame = _encode_frame(H3_FRAME_SETTINGS, payload)
 
-        events = conn._stream_data_received(stream_id=2, data=frame, end_stream=False)
+        event = StreamDataReceived(stream_id=2, data=frame, end_stream=False)
+        events = conn.handle_event(event)
         # SETTINGS doesn't produce H3 events
         assert len(events) == 0
         # But peer settings should be applied

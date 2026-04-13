@@ -6,7 +6,7 @@ from tests.utils import load
 from zoomies.core import QuicConfiguration, QuicConnection
 from zoomies.encoding import Buffer
 from zoomies.encoding.buffer import BufferReadError
-from zoomies.events import ConnectionClosed, DatagramReceived
+from zoomies.events import ConnectionClosed, DatagramReceived, PacketDropped
 from zoomies.frames import pull_ack_frame, pull_crypto_frame, pull_stream_frame
 from zoomies.packet import pull_quic_header
 
@@ -22,9 +22,11 @@ def test_connection_short_datagram_returns_events() -> None:
     config = QuicConfiguration(certificate=CERT, private_key=KEY)
     conn = QuicConnection(config)
     events = conn.datagram_received(b"\x00" * 6, ("127.0.0.1", 443))
-    assert len(events) == 1
+    assert len(events) == 2
     assert isinstance(events[0], DatagramReceived)
     assert events[0].data == b"\x00" * 6
+    assert isinstance(events[1], PacketDropped)
+    assert events[1].reason == "datagram_too_short"
 
 
 def test_connection_invalid_header_connection_closed() -> None:

@@ -108,6 +108,17 @@ class RetryReceived:
 
 
 @dataclass(frozen=True, slots=True)
+class PacketDropped:
+    """Diagnostic: a received datagram was dropped without processing.
+
+    Not a protocol error — just informational. Useful for debugging
+    connection stalls and silent failures.
+    """
+
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
 class ConnectionMigrated:
     """Peer migrated to a new address (path validation succeeded)."""
 
@@ -149,6 +160,7 @@ QuicEvent = (
     | ZeroRttRejected
     | NewSessionTicket
     | RetryReceived
+    | PacketDropped
     | ConnectionMigrated
 )
 
