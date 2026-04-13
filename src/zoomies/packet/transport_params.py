@@ -89,7 +89,21 @@ def pull_quic_transport_parameters(buf: Buffer) -> QuicTransportParameters:
             kwargs[name] = bool(val) if val is not None else False
         else:
             kwargs[name] = val
-    return QuicTransportParameters(**kwargs)
+    tp = QuicTransportParameters(**kwargs)
+    _validate_transport_parameters(tp)
+    return tp
+
+
+def _validate_transport_parameters(tp: QuicTransportParameters) -> None:
+    """Validate peer transport parameter ranges (RFC 9000 §18.2)."""
+    if tp.max_udp_payload_size is not None and tp.max_udp_payload_size < 1200:
+        raise ValueError(
+            f"max_udp_payload_size must be >= 1200, got {tp.max_udp_payload_size}"
+        )
+    if tp.ack_delay_exponent is not None and tp.ack_delay_exponent > 20:
+        raise ValueError(
+            f"ack_delay_exponent must be <= 20, got {tp.ack_delay_exponent}"
+        )
 
 
 def push_quic_transport_parameters(buf: Buffer, params: QuicTransportParameters) -> None:

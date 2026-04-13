@@ -183,7 +183,7 @@ class H3Connection:
         type prefix (varint 0x00).
         """
         if self._settings_sent:
-            raise RuntimeError("settings_data() already called")
+            return None
         self._settings_sent = True
         settings = self.local_settings()
         payload = encode_settings(settings)
@@ -263,28 +263,6 @@ class H3Connection:
         """Feed encoder stream data to the decoder."""
         if self._decoder is not None:
             self._decoder.feed_encoder_stream(data)
-
-    def stream_data_received(
-        self,
-        stream_id: int,
-        data: bytes,
-        end_stream: bool,
-        is_0rtt: bool = False,
-    ) -> list[H3Event]:
-        """Process stream data; returns H3 events.
-
-        .. deprecated::
-            Use :meth:`handle_event` instead. This method will be removed
-            in a future release.
-        """
-        import warnings
-
-        warnings.warn(
-            "stream_data_received() is deprecated, use handle_event() instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        return self._stream_data_received(stream_id, data, end_stream, is_0rtt=is_0rtt)
 
     def _stream_data_received(
         self,

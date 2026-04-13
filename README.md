@@ -116,7 +116,7 @@ for dg in conn.send_datagrams():
 ```python
 from zoomies.core import QuicConnection, QuicConfiguration
 
-config = QuicConfiguration(is_client=True, verify_mode=False)
+config = QuicConfiguration(is_client=True, verify_mode=False)  # test only — use ca_certs in production
 conn = QuicConnection(config)
 conn.connect()
 

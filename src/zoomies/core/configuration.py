@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
@@ -94,3 +95,17 @@ class QuicConfiguration:
                 raise ValueError("Server QuicConfiguration requires non-empty 'private_key'")
         if self.is_client and self.verify_mode and self.ca_certs is None:
             raise ValueError("Client QuicConfiguration with verify_mode=True requires 'ca_certs'")
+        if self.idle_timeout < 0:
+            raise ValueError("idle_timeout must be non-negative")
+        if self.max_data < 0:
+            raise ValueError("max_data must be non-negative")
+        if self.max_stream_data < 0:
+            raise ValueError("max_stream_data must be non-negative")
+        if self.max_data == 0:
+            warnings.warn(
+                "max_data=0 disables connection-level flow control — "
+                "a misbehaving peer can send unlimited data",
+                stacklevel=2,
+            )
+        if self.server_name is not None and self.server_name == "":
+            raise ValueError("server_name must be None or a non-empty string")
