@@ -434,12 +434,8 @@ class QuicTlsContext:
                 else:
                     break
             except ValueError, BufferReadError:
-                if self._state == TlsHandshakeState.START:
-                    self._state = TlsHandshakeState.CLIENT_HELLO_RECEIVED
-                else:
-                    self._state = TlsHandshakeState.CLOSED
-                    raise
-                break
+                self._state = TlsHandshakeState.CLOSED
+                raise
 
         return TlsHandshakeResult(
             state=self._state,
@@ -469,7 +465,10 @@ class QuicTlsContext:
         # Parse peer QUIC transport parameters from ClientHello extensions
         if QUIC_TP_EXT_TYPE in ch_info.extensions:
             tp_buf = Buffer(data=ch_info.extensions[QUIC_TP_EXT_TYPE])
-            self._peer_transport_params = pull_quic_transport_parameters(tp_buf)
+            try:
+                self._peer_transport_params = pull_quic_transport_parameters(tp_buf)
+            except (BufferReadError, ValueError) as exc:
+                raise ValueError(f"Invalid QUIC transport parameters: {exc}") from exc
 
         # Check for PSK resumption
         psk: bytes | None = None
@@ -1109,7 +1108,10 @@ class QuicClientTlsContext:
         # Parse server QUIC transport parameters
         if QUIC_TP_EXT_TYPE in extensions:
             tp_buf = Buffer(data=extensions[QUIC_TP_EXT_TYPE])
-            self._peer_transport_params = pull_quic_transport_parameters(tp_buf)
+            try:
+                self._peer_transport_params = pull_quic_transport_parameters(tp_buf)
+            except (BufferReadError, ValueError) as exc:
+                raise ValueError(f"Invalid QUIC transport parameters: {exc}") from exc
         if self._is_psk:
             # PSK mode: no Certificate or CertificateVerify — go straight to Finished
             self._transcript_at_cert = self._handshake_hash.copy().finalize()

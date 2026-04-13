@@ -9,6 +9,7 @@
 **Free-threading-native QUIC and HTTP/3 for Python 3.14t — sans-I/O, typed**
 
 ```python
+import time
 from zoomies.core import QuicConnection, QuicConfiguration
 from zoomies.events import HandshakeComplete
 
@@ -16,11 +17,12 @@ config = QuicConfiguration(certificate=cert, private_key=key)
 conn = QuicConnection(config)
 
 # Sans-I/O: feed datagrams in, get events out
-events = conn.datagram_received(datagram, addr)
+now = time.monotonic()
+events = conn.datagram_received(datagram, addr, now=now)
 for event in events:
     if isinstance(event, HandshakeComplete):
         ...
-for dg in conn.send_datagrams():
+for dg in conn.send_datagrams(now=now):
     sock.sendto(dg, addr)
 ```
 
@@ -100,6 +102,7 @@ print(f"Version: {header.version:#x}, CID: {header.destination_cid}")
 ### Sans-I/O connection (server)
 
 ```python
+import time
 from zoomies.core import QuicConnection, QuicConfiguration
 from zoomies.events import HandshakeComplete
 
@@ -110,24 +113,27 @@ with open("key.pem", "rb") as f:
 config = QuicConfiguration(certificate=cert, private_key=key)
 conn = QuicConnection(config)
 
-events = conn.datagram_received(datagram, addr)
+now = time.monotonic()
+events = conn.datagram_received(datagram, addr, now=now)
 for event in events:
     if isinstance(event, HandshakeComplete):
         print("Handshake done!")
-for dg in conn.send_datagrams():
+for dg in conn.send_datagrams(now=now):
     sock.sendto(dg, addr)
 ```
 
 ### Sans-I/O connection (client)
 
 ```python
+import time
 from zoomies.core import QuicConnection, QuicConfiguration
 
 config = QuicConfiguration(is_client=True, verify_mode=False)  # test only — use ca_certs in production
 conn = QuicConnection(config)
 conn.connect()
 
-for dg in conn.send_datagrams():
+now = time.monotonic()
+for dg in conn.send_datagrams(now=now):
     sock.sendto(dg, server_addr)
 ```
 

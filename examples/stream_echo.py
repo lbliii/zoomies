@@ -180,7 +180,7 @@ def demo_timer_loop() -> None:
     import time
 
     from zoomies.core import QuicConfiguration, QuicConnection
-    from zoomies.events import ConnectionClosed
+    from zoomies.events import ConnectionClosed, HandshakeComplete
 
     ADDR = ("127.0.0.1", 4433)
 
@@ -195,17 +195,27 @@ def demo_timer_loop() -> None:
     server = QuicConnection(server_config)
     client = QuicConnection(client_config)
 
-    # --- Perform handshake via loopback ---
+    # --- Perform handshake via loopback (event-driven) ---
     now = time.monotonic()
     client.connect()
-    for dg in client.send_datagrams(now=now):
-        events = server.datagram_received(dg, ADDR, now=now)
-    for dg in server.send_datagrams(now=now):
-        events = client.datagram_received(dg, ADDR, now=now)
-    for dg in client.send_datagrams(now=now):
-        events = server.datagram_received(dg, ADDR, now=now)
-    for dg in server.send_datagrams(now=now):
-        events = client.datagram_received(dg, ADDR, now=now)
+    client_done = False
+    server_done = False
+
+    for _round in range(10):  # max rounds to prevent infinite loop
+        for dg in client.send_datagrams(now=now):
+            for ev in server.datagram_received(dg, ADDR, now=now):
+                if isinstance(ev, HandshakeComplete):
+                    server_done = True
+        for dg in server.send_datagrams(now=now):
+            for ev in client.datagram_received(dg, ADDR, now=now):
+                if isinstance(ev, HandshakeComplete):
+                    client_done = True
+        if client_done and server_done:
+            break
+
+    if not (client_done and server_done):
+        print("  Handshake did not complete!")
+        return
 
     print("  Handshake complete (client-server loopback)")
 

@@ -225,7 +225,9 @@ class QuicConnection:
         # Connection-level flow control (RFC 9000 §4)
         self._local_max_data = config.max_data  # how much peer can send us
         self._local_max_data_used = 0  # how much peer has sent us
+        self._stream_max_offsets: dict[int, int] = {}  # per-stream highest offset for dedup
         self._peer_max_data = 0  # how much we can send (set by peer's transport params)
+        self._peer_data_sent = 0  # how much we have sent toward peer's limit
         # Key update tracking (RFC 9001 §6)
         self._key_update_time: float | None = None  # when last key update occurred
 
@@ -381,6 +383,12 @@ class QuicConnection:
         ):
             self._zero_rtt_stream_queue.append((stream_id, data, end_stream))
         else:
+            # Connection-level send-side flow control (RFC 9000 §4.1)
+            if self._peer_max_data > 0 and self._peer_data_sent + len(data) > self._peer_max_data:
+                raise BufferError(
+                    f"Peer connection flow control limit exceeded "
+                    f"({self._peer_data_sent} sent + {len(data)} new > {self._peer_max_data} limit)"
+                )
             limit = self._config.max_send_queue_bytes
             if limit > 0 and self._stream_send_queue_bytes + len(data) > limit:
                 raise BufferError(
@@ -388,6 +396,8 @@ class QuicConnection:
                 )
             self._stream_send_queue.append((stream_id, data, end_stream))
             self._stream_send_queue_bytes += len(data)
+            if self._peer_max_data > 0:
+                self._peer_data_sent += len(data)
 
     def datagram_received(
         self, data: bytes, addr: tuple[str, int], *, now: float = 0.0
@@ -962,13 +972,20 @@ class QuicConnection:
                         self._close_with_error(0x03, "Flow control limit exceeded", events)
                         return
                     # Connection-level flow control (RFC 9000 §4.1)
-                    if self._local_max_data > 0:
-                        self._local_max_data_used += len(frame.data)
-                        if self._local_max_data_used > self._local_max_data:
-                            self._close_with_error(
-                                0x03, "Connection flow control limit exceeded", events
-                            )
-                            return
+                    # Only count genuinely new bytes (not retransmissions/overlaps)
+                    if self._local_max_data > 0 and frame.data:
+                        stream_key = frame.stream_id.value
+                        new_end = frame.offset + len(frame.data)
+                        prev_end = self._stream_max_offsets.get(stream_key, 0)
+                        if new_end > prev_end:
+                            new_bytes = new_end - max(frame.offset, prev_end)
+                            self._local_max_data_used += new_bytes
+                            self._stream_max_offsets[stream_key] = new_end
+                            if self._local_max_data_used > self._local_max_data:
+                                self._close_with_error(
+                                    0x03, "Connection flow control limit exceeded", events
+                                )
+                                return
                     delivered = stream.add_receive_frame(frame)
                     if delivered or frame.fin:
                         events.append(

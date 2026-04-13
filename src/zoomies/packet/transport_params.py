@@ -19,6 +19,7 @@ TP_INITIAL_MAX_STREAMS_UNI = 0x09
 TP_ACK_DELAY_EXPONENT = 0x0A
 TP_MAX_ACK_DELAY = 0x0B
 TP_DISABLE_ACTIVE_MIGRATION = 0x0C
+TP_ACTIVE_CONNECTION_ID_LIMIT = 0x0E
 TP_INITIAL_SOURCE_CONNECTION_ID = 0x0F
 TP_RETRY_SOURCE_CONNECTION_ID = 0x10
 
@@ -40,6 +41,7 @@ class QuicTransportParameters:
     ack_delay_exponent: int | None = None
     max_ack_delay: int | None = None
     disable_active_migration: bool = False
+    active_connection_id_limit: int | None = None
     initial_source_connection_id: bytes | None = None
     retry_source_connection_id: bytes | None = None
 
@@ -58,6 +60,7 @@ _PARAM_IDS: dict[int, tuple[str, str]] = {
     TP_ACK_DELAY_EXPONENT: ("ack_delay_exponent", "int"),
     TP_MAX_ACK_DELAY: ("max_ack_delay", "int"),
     TP_DISABLE_ACTIVE_MIGRATION: ("disable_active_migration", "bool"),
+    TP_ACTIVE_CONNECTION_ID_LIMIT: ("active_connection_id_limit", "int"),
     TP_INITIAL_SOURCE_CONNECTION_ID: ("initial_source_connection_id", "bytes"),
     TP_RETRY_SOURCE_CONNECTION_ID: ("retry_source_connection_id", "bytes"),
 }
@@ -100,6 +103,10 @@ def _validate_transport_parameters(tp: QuicTransportParameters) -> None:
         raise ValueError(f"max_udp_payload_size must be >= 1200, got {tp.max_udp_payload_size}")
     if tp.ack_delay_exponent is not None and tp.ack_delay_exponent > 20:
         raise ValueError(f"ack_delay_exponent must be <= 20, got {tp.ack_delay_exponent}")
+    if tp.active_connection_id_limit is not None and tp.active_connection_id_limit < 2:
+        raise ValueError(
+            f"active_connection_id_limit must be >= 2, got {tp.active_connection_id_limit}"
+        )
 
 
 def push_quic_transport_parameters(buf: Buffer, params: QuicTransportParameters) -> None:
