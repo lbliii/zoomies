@@ -93,6 +93,8 @@ select = [
     "PERF", # perflint - performance anti-patterns
     "C4",   # unnecessary comprehensions/list()/dict() calls
     "RUF",  # Ruff-specific (unused noqa, mutable class defaults, etc.)
+    "S110", # flake8-bandit: try-except-pass (silent exception swallowing)
+    "S112", # flake8-bandit: try-except-continue (silent exception swallowing)
 ]
 
 [tool.ruff.lint.per-file-ignores]
