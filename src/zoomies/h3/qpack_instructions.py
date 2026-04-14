@@ -1,7 +1,5 @@
 """QPACK encoder/decoder stream instructions (RFC 9204 SS4.3-4.4)."""
 
-from __future__ import annotations
-
 from zoomies.encoding import Buffer
 from zoomies.h3.huffman import huffman_decode
 
@@ -90,37 +88,38 @@ def decode_encoder_instruction(buf: Buffer) -> tuple[str, dict]:
     first = buf.pull_uint8()
     buf.seek(buf.tell() - 1)
 
-    if first & 0x80:
-        # Insert With Name Reference (§4.3.2)
-        byte = buf.pull_uint8()
-        is_static = bool(byte & 0x40)
-        name_index = _pull_prefixed_int(buf, byte, 6)
-        value = _pull_string(buf, prefix_bits=7)
-        return (
-            "insert_name_ref",
-            {
-                "is_static": is_static,
-                "name_index": name_index,
-                "value": value,
-            },
-        )
-    elif first & 0x40:
-        # Insert With Literal Name (§4.3.3)
-        byte = buf.pull_uint8()
-        name_len = _pull_prefixed_int(buf, byte, 5)
-        name = buf.pull_bytes(name_len).decode("utf-8")
-        value = _pull_string(buf, prefix_bits=7)
-        return ("insert_literal", {"name": name, "value": value})
-    elif first & 0x20:
-        # Set Dynamic Table Capacity (§4.3.1)
-        byte = buf.pull_uint8()
-        capacity = _pull_prefixed_int(buf, byte, 5)
-        return ("set_capacity", {"capacity": capacity})
-    else:
-        # Duplicate (§4.3.4)
-        byte = buf.pull_uint8()
-        index = _pull_prefixed_int(buf, byte, 5)
-        return ("duplicate", {"index": index})
+    match first:
+        case _ if first & 0x80:
+            # Insert With Name Reference (§4.3.2)
+            byte = buf.pull_uint8()
+            is_static = bool(byte & 0x40)
+            name_index = _pull_prefixed_int(buf, byte, 6)
+            value = _pull_string(buf, prefix_bits=7)
+            return (
+                "insert_name_ref",
+                {
+                    "is_static": is_static,
+                    "name_index": name_index,
+                    "value": value,
+                },
+            )
+        case _ if first & 0x40:
+            # Insert With Literal Name (§4.3.3)
+            byte = buf.pull_uint8()
+            name_len = _pull_prefixed_int(buf, byte, 5)
+            name = buf.pull_bytes(name_len).decode("utf-8")
+            value = _pull_string(buf, prefix_bits=7)
+            return ("insert_literal", {"name": name, "value": value})
+        case _ if first & 0x20:
+            # Set Dynamic Table Capacity (§4.3.1)
+            byte = buf.pull_uint8()
+            capacity = _pull_prefixed_int(buf, byte, 5)
+            return ("set_capacity", {"capacity": capacity})
+        case _:
+            # Duplicate (§4.3.4)
+            byte = buf.pull_uint8()
+            index = _pull_prefixed_int(buf, byte, 5)
+            return ("duplicate", {"index": index})
 
 
 def decode_all_encoder_instructions(data: bytes) -> list[tuple[str, dict]]:
@@ -146,21 +145,22 @@ def decode_decoder_instruction(buf: Buffer) -> tuple[str, dict]:
     first = buf.pull_uint8()
     buf.seek(buf.tell() - 1)
 
-    if first & 0x80:
-        # Section Acknowledgment (§4.4.1)
-        byte = buf.pull_uint8()
-        stream_id = _pull_prefixed_int(buf, byte, 7)
-        return ("section_ack", {"stream_id": stream_id})
-    elif first & 0x40:
-        # Stream Cancellation (§4.4.2)
-        byte = buf.pull_uint8()
-        stream_id = _pull_prefixed_int(buf, byte, 6)
-        return ("stream_cancellation", {"stream_id": stream_id})
-    else:
-        # Insert Count Increment (§4.4.3)
-        byte = buf.pull_uint8()
-        increment = _pull_prefixed_int(buf, byte, 6)
-        return ("insert_count_increment", {"increment": increment})
+    match first:
+        case _ if first & 0x80:
+            # Section Acknowledgment (§4.4.1)
+            byte = buf.pull_uint8()
+            stream_id = _pull_prefixed_int(buf, byte, 7)
+            return ("section_ack", {"stream_id": stream_id})
+        case _ if first & 0x40:
+            # Stream Cancellation (§4.4.2)
+            byte = buf.pull_uint8()
+            stream_id = _pull_prefixed_int(buf, byte, 6)
+            return ("stream_cancellation", {"stream_id": stream_id})
+        case _:
+            # Insert Count Increment (§4.4.3)
+            byte = buf.pull_uint8()
+            increment = _pull_prefixed_int(buf, byte, 6)
+            return ("insert_count_increment", {"increment": increment})
 
 
 def decode_all_decoder_instructions(data: bytes) -> list[tuple[str, dict]]:

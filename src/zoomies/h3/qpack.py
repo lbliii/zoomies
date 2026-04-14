@@ -1,7 +1,5 @@
 """QPACK encoder/decoder (RFC 9204) -- static table + dynamic table."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from zoomies.encoding import Buffer

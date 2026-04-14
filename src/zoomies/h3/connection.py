@@ -1,7 +1,5 @@
 """HTTP/3 connection -- receive H3 frames, emit H3HeadersReceived, H3DataReceived."""
 
-from __future__ import annotations
-
 from typing import Protocol
 
 from zoomies.encoding import Buffer

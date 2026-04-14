@@ -1,7 +1,5 @@
 """QPACK dynamic table (RFC 9204 §3.2)."""
 
-from __future__ import annotations
-
 # RFC 9204 §3.2.1: entry size = len(name) + len(value) + 32
 ENTRY_OVERHEAD = 32
 

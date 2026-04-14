@@ -1015,28 +1015,29 @@ class QuicClientTlsContext:
             msg = self._receive_buffer[:total]
             self._receive_buffer = self._receive_buffer[total:]
 
-            if self._state == ClientTlsState.WAIT_SERVER_HELLO:
-                if msg_type != HANDSHAKE_SERVER_HELLO:
-                    raise ValueError(f"Expected ServerHello, got {msg_type}")
-                self._handle_server_hello(msg)
-            elif self._state == ClientTlsState.WAIT_ENCRYPTED_EXTENSIONS:
-                if msg_type != HANDSHAKE_ENCRYPTED_EXTENSIONS:
-                    raise ValueError(f"Expected EncryptedExtensions, got {msg_type}")
-                self._handle_encrypted_extensions(msg)
-            elif self._state == ClientTlsState.WAIT_CERTIFICATE:
-                if msg_type != HANDSHAKE_CERTIFICATE:
-                    raise ValueError(f"Expected Certificate, got {msg_type}")
-                self._handle_certificate(msg)
-            elif self._state == ClientTlsState.WAIT_CERTIFICATE_VERIFY:
-                if msg_type != HANDSHAKE_CERTIFICATE_VERIFY:
-                    raise ValueError(f"Expected CertificateVerify, got {msg_type}")
-                self._handle_certificate_verify(msg)
-            elif self._state == ClientTlsState.WAIT_FINISHED:
-                if msg_type != HANDSHAKE_FINISHED:
-                    raise ValueError(f"Expected Finished, got {msg_type}")
-                to_send = self._handle_server_finished(msg)
-            else:
-                break
+            match self._state:
+                case ClientTlsState.WAIT_SERVER_HELLO:
+                    if msg_type != HANDSHAKE_SERVER_HELLO:
+                        raise ValueError(f"Expected ServerHello, got {msg_type}")
+                    self._handle_server_hello(msg)
+                case ClientTlsState.WAIT_ENCRYPTED_EXTENSIONS:
+                    if msg_type != HANDSHAKE_ENCRYPTED_EXTENSIONS:
+                        raise ValueError(f"Expected EncryptedExtensions, got {msg_type}")
+                    self._handle_encrypted_extensions(msg)
+                case ClientTlsState.WAIT_CERTIFICATE:
+                    if msg_type != HANDSHAKE_CERTIFICATE:
+                        raise ValueError(f"Expected Certificate, got {msg_type}")
+                    self._handle_certificate(msg)
+                case ClientTlsState.WAIT_CERTIFICATE_VERIFY:
+                    if msg_type != HANDSHAKE_CERTIFICATE_VERIFY:
+                        raise ValueError(f"Expected CertificateVerify, got {msg_type}")
+                    self._handle_certificate_verify(msg)
+                case ClientTlsState.WAIT_FINISHED:
+                    if msg_type != HANDSHAKE_FINISHED:
+                        raise ValueError(f"Expected Finished, got {msg_type}")
+                    to_send = self._handle_server_finished(msg)
+                case _:
+                    break
 
         # After handshake completes, parse any NewSessionTicket messages
         tickets: list[SessionTicket] = []
