@@ -146,7 +146,7 @@ class H3DataReceived:
 
 
 # Union type for all QUIC events
-QuicEvent = (
+type QuicEvent = (
     DatagramReceived
     | StreamDataReceived
     | ConnectionClosed
@@ -165,4 +165,4 @@ QuicEvent = (
 )
 
 # Union type for HTTP/3 events
-H3Event = H3HeadersReceived | H3DataReceived
+type H3Event = H3HeadersReceived | H3DataReceived

@@ -59,7 +59,7 @@ class SentPathChallengeFrame:
     data: bytes
 
 
-SentFrame = (
+type SentFrame = (
     SentCryptoFrame
     | SentStreamFrame
     | SentAckFrame

@@ -434,17 +434,17 @@ class QuicConnection:
             self._state = ConnectionState.CLOSED
             return events
 
-        if isinstance(header, LongHeader):
-            if header.packet_type == PACKET_TYPE_INITIAL:
+        match header:
+            case LongHeader() if header.packet_type == PACKET_TYPE_INITIAL:
                 self._handle_initial(data, buf, header, events)
-            elif header.packet_type == PACKET_TYPE_HANDSHAKE:
+            case LongHeader() if header.packet_type == PACKET_TYPE_HANDSHAKE:
                 self._handle_handshake(data, buf, header, events)
-            elif header.packet_type == PACKET_TYPE_ZERO_RTT:
+            case LongHeader() if header.packet_type == PACKET_TYPE_ZERO_RTT:
                 self._handle_0rtt(data, buf, header, events)
-            elif header.packet_type == PACKET_TYPE_RETRY:
+            case LongHeader() if header.packet_type == PACKET_TYPE_RETRY:
                 self._handle_retry(header, events)
-        elif isinstance(header, ShortHeader):
-            self._handle_short(data, buf, header, events)
+            case ShortHeader():
+                self._handle_short(data, buf, header, events)
 
         return events
 
@@ -897,121 +897,122 @@ class QuicConnection:
                 pos = buf.tell()
                 first = buf.pull_uint_var()
                 buf.seek(pos)
-                if first == 0x00:
-                    pull_padding_frame(buf)
-                elif first == 0x01:
-                    pull_ping_frame(buf)
-                elif first in (0x02, 0x03):
-                    buf.pull_uint8()
-                    ack = pull_ack_frame(buf)
-                    self._process_ack(ack)
-                elif first == 0x04:
-                    frame = pull_reset_stream_frame(buf)
-                    events.append(
-                        StreamReset(
-                            stream_id=frame.stream_id.value,
-                            error_code=frame.error_code,
-                            final_size=frame.final_size,
-                        )
-                    )
-                elif first == 0x05:
-                    frame = pull_stop_sending_frame(buf)
-                    events.append(
-                        StopSendingReceived(
-                            stream_id=frame.stream_id.value,
-                            error_code=frame.error_code,
-                        )
-                    )
-                elif first == CRYPTO_FRAME_TYPE:
-                    frame = pull_crypto_frame(buf)
-                    if crypto_level == "initial":
-                        bisect.insort(self._initial_crypto_recv, (frame.offset, frame.data))
-                    else:
-                        bisect.insort(self._handshake_crypto_recv, (frame.offset, frame.data))
-                elif first == 0x18:
-                    frame = pull_new_connection_id(buf)
-                    self._peer_cids[frame.sequence] = frame.connection_id
-                    # Retire peer CIDs with sequence < retire_prior_to
-                    for seq in list(self._peer_cids):
-                        if seq < frame.retire_prior_to:
-                            del self._peer_cids[seq]
-                elif first == 0x19:
-                    frame = pull_retire_connection_id(buf)
-                    cid = self._our_seq_to_cid.pop(frame.sequence, None)
-                    if cid is not None:
-                        self._our_cids.discard(cid)
-                        events.append(ConnectionIdRetired(connection_id=cid))
-                        # Issue replacement CID to maintain pool
-                        self._queue_new_connection_id(events)
-                elif first == 0x1A:
-                    frame = pull_path_challenge(buf)
-                    self._queue_path_response(frame.data)
-                elif first == 0x1B:
-                    frame = pull_path_response(buf)
-                    self._handle_path_response(frame.data, events, datagram_addr)
-                elif first in (0x1C, 0x1D):
-                    buf.pull_uint_var()  # consume frame type
-                    frame = pull_connection_close(buf)
-                    self._state = ConnectionState.CLOSED
-                    events.append(
-                        ConnectionClosed(
-                            error_code=frame.error_code,
-                            reason=frame.reason_phrase.decode("utf-8", errors="replace"),
-                        )
-                    )
-                    return
-                elif first == HANDSHAKE_DONE_FRAME_TYPE:
-                    buf.pull_uint_var()  # consume frame type
-                    if self._is_client and self._one_rtt_crypto:
-                        self._state = ConnectionState.ONE_RTT
-                        events.append(HandshakeComplete())
-                elif 0x08 <= first <= 0x0F:
-                    frame = pull_stream_frame(buf)
-                    stream = self._get_or_create_stream(frame.stream_id)
-                    if not stream._recv.flow_control_ok(frame.offset, len(frame.data)):
-                        self._close_with_error(0x03, "Flow control limit exceeded", events)
-                        return
-                    # Connection-level flow control (RFC 9000 §4.1)
-                    # Only count genuinely new bytes (not retransmissions/overlaps)
-                    if self._local_max_data > 0 and frame.data:
-                        stream_key = frame.stream_id.value
-                        new_end = frame.offset + len(frame.data)
-                        prev_end = self._stream_max_offsets.get(stream_key, 0)
-                        if new_end > prev_end:
-                            new_bytes = new_end - max(frame.offset, prev_end)
-                            self._local_max_data_used += new_bytes
-                            self._stream_max_offsets[stream_key] = new_end
-                            if self._local_max_data_used > self._local_max_data:
-                                self._close_with_error(
-                                    0x03, "Connection flow control limit exceeded", events
-                                )
-                                return
-                    delivered = stream.add_receive_frame(frame)
-                    if delivered or frame.fin:
+                match first:
+                    case 0x00:
+                        pull_padding_frame(buf)
+                    case 0x01:
+                        pull_ping_frame(buf)
+                    case 0x02 | 0x03:
+                        buf.pull_uint8()
+                        ack = pull_ack_frame(buf)
+                        self._process_ack(ack)
+                    case 0x04:
+                        frame = pull_reset_stream_frame(buf)
                         events.append(
-                            StreamDataReceived(
+                            StreamReset(
                                 stream_id=frame.stream_id.value,
-                                data=delivered,
-                                end_stream=stream.receive_complete,
-                                is_0rtt=is_0rtt,
+                                error_code=frame.error_code,
+                                final_size=frame.final_size,
                             )
                         )
-                else:
-                    # Unknown frame type — skip per RFC 9000 §19
-                    unknown_type = buf.pull_uint_var()
-                    # Best effort: try to skip the frame body if it has a length prefix
-                    # If not, we have to break (can't determine frame size)
-                    try:
-                        frame_len = buf.pull_uint_var()
-                        buf.pull_bytes(frame_len)
+                    case 0x05:
+                        frame = pull_stop_sending_frame(buf)
                         events.append(
-                            PacketDropped(reason=f"unknown_frame_skipped:0x{unknown_type:x}")
+                            StopSendingReceived(
+                                stream_id=frame.stream_id.value,
+                                error_code=frame.error_code,
+                            )
                         )
-                    except ValueError, BufferReadError:
+                    case _ if first == CRYPTO_FRAME_TYPE:
+                        frame = pull_crypto_frame(buf)
+                        if crypto_level == "initial":
+                            bisect.insort(self._initial_crypto_recv, (frame.offset, frame.data))
+                        else:
+                            bisect.insort(self._handshake_crypto_recv, (frame.offset, frame.data))
+                    case _ if 0x08 <= first <= 0x0F:
+                        frame = pull_stream_frame(buf)
+                        stream = self._get_or_create_stream(frame.stream_id)
+                        if not stream._recv.flow_control_ok(frame.offset, len(frame.data)):
+                            self._close_with_error(0x03, "Flow control limit exceeded", events)
+                            return
+                        # Connection-level flow control (RFC 9000 §4.1)
+                        # Only count genuinely new bytes (not retransmissions/overlaps)
+                        if self._local_max_data > 0 and frame.data:
+                            stream_key = frame.stream_id.value
+                            new_end = frame.offset + len(frame.data)
+                            prev_end = self._stream_max_offsets.get(stream_key, 0)
+                            if new_end > prev_end:
+                                new_bytes = new_end - max(frame.offset, prev_end)
+                                self._local_max_data_used += new_bytes
+                                self._stream_max_offsets[stream_key] = new_end
+                                if self._local_max_data_used > self._local_max_data:
+                                    self._close_with_error(
+                                        0x03, "Connection flow control limit exceeded", events
+                                    )
+                                    return
+                        delivered = stream.add_receive_frame(frame)
+                        if delivered or frame.fin:
+                            events.append(
+                                StreamDataReceived(
+                                    stream_id=frame.stream_id.value,
+                                    data=delivered,
+                                    end_stream=stream.receive_complete,
+                                    is_0rtt=is_0rtt,
+                                )
+                            )
+                    case 0x18:
+                        frame = pull_new_connection_id(buf)
+                        self._peer_cids[frame.sequence] = frame.connection_id
+                        # Retire peer CIDs with sequence < retire_prior_to
+                        for seq in list(self._peer_cids):
+                            if seq < frame.retire_prior_to:
+                                del self._peer_cids[seq]
+                    case 0x19:
+                        frame = pull_retire_connection_id(buf)
+                        cid = self._our_seq_to_cid.pop(frame.sequence, None)
+                        if cid is not None:
+                            self._our_cids.discard(cid)
+                            events.append(ConnectionIdRetired(connection_id=cid))
+                            # Issue replacement CID to maintain pool
+                            self._queue_new_connection_id(events)
+                    case 0x1A:
+                        frame = pull_path_challenge(buf)
+                        self._queue_path_response(frame.data)
+                    case 0x1B:
+                        frame = pull_path_response(buf)
+                        self._handle_path_response(frame.data, events, datagram_addr)
+                    case 0x1C | 0x1D:
+                        buf.pull_uint_var()  # consume frame type
+                        frame = pull_connection_close(buf)
+                        self._state = ConnectionState.CLOSED
                         events.append(
-                            PacketDropped(reason=f"unknown_frame_no_length:0x{unknown_type:x}")
+                            ConnectionClosed(
+                                error_code=frame.error_code,
+                                reason=frame.reason_phrase.decode("utf-8", errors="replace"),
+                            )
                         )
-                        break
+                        return
+                    case _ if first == HANDSHAKE_DONE_FRAME_TYPE:
+                        buf.pull_uint_var()  # consume frame type
+                        if self._is_client and self._one_rtt_crypto:
+                            self._state = ConnectionState.ONE_RTT
+                            events.append(HandshakeComplete())
+                    case _:
+                        # Unknown frame type — skip per RFC 9000 §19
+                        unknown_type = buf.pull_uint_var()
+                        # Best effort: try to skip the frame body if it has a length prefix
+                        # If not, we have to break (can't determine frame size)
+                        try:
+                            frame_len = buf.pull_uint_var()
+                            buf.pull_bytes(frame_len)
+                            events.append(
+                                PacketDropped(reason=f"unknown_frame_skipped:0x{unknown_type:x}")
+                            )
+                        except ValueError, BufferReadError:
+                            events.append(
+                                PacketDropped(reason=f"unknown_frame_no_length:0x{unknown_type:x}")
+                            )
+                            break
             except ValueError, BufferReadError:
                 break
 
