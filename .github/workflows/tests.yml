@@ -99,3 +99,28 @@ jobs:
       - name: Run format check
         run: |
           uv run poe format-check
+
+      - name: Ban silent exception patterns
+        run: |
+          echo "Checking for silent exception anti-patterns in src/..."
+          FAILED=0
+
+          # Ban contextlib.suppress in production code (allowed in tests)
+          if grep -rn 'contextlib\.suppress' src/; then
+            echo "::error::contextlib.suppress found in src/ — handle exceptions explicitly"
+            FAILED=1
+          fi
+
+          # Ban 'or {}' after load/parse calls (masks failures)
+          if grep -rn 'load_yaml\|load_json\|load_toml\|load_config' src/ | grep -q 'or {}'; then
+            echo "::error::Found 'load_*(...) or {}' — do not mask load failures with fallback dicts"
+            FAILED=1
+          fi
+
+          # Bare except blocks without logging, re-raise, or # silent: reason
+          if grep -rn 'except.*:' src/ --include='*.py' | grep -v 'raise\|log\|logger\|warn\|# silent:' | grep -qE '(pass|continue)\s*$'; then
+            echo "::error::Found except block with pass/continue but no logging or # silent: reason"
+            FAILED=1
+          fi
+
+          exit $FAILED
