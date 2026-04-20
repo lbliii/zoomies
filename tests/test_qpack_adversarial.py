@@ -92,7 +92,7 @@ class TestDecoderAdversarial:
 
         _push_prefixed_int(buf, 0x00, 8, 257)
         buf.push_uint8(0)  # Delta Base = 0
-        with pytest.raises(ValueError, match="full range"):
+        with pytest.raises(ValueError, match=r"full_range=\d+"):
             dec.decode(buf.data)
 
     def test_empty_header_block(self) -> None:

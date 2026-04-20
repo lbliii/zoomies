@@ -75,7 +75,7 @@ def test_server_rejects_connect() -> None:
     """Server cannot call connect()."""
     server_config = QuicConfiguration(certificate=CERT, private_key=KEY)
     server = QuicConnection(server_config)
-    with pytest.raises(RuntimeError, match="client mode"):
+    with pytest.raises(RuntimeError, match="is_client=True"):
         server.connect()
 
 
