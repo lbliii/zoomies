@@ -30,10 +30,7 @@ def test_public_raises_follow_convention() -> None:
 def test_linter_fires_on_bad_raise(tmp_path: Path) -> None:
     """The linter actually rejects a short/period-less raise."""
     bad = tmp_path / "bad.py"
-    bad.write_text(
-        "def public_func() -> None:\n"
-        "    raise ValueError('nope')\n"
-    )
+    bad.write_text("def public_func() -> None:\n    raise ValueError('nope')\n")
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(bad)],
         cwd=REPO_ROOT,
@@ -47,28 +44,21 @@ def test_linter_fires_on_bad_raise(tmp_path: Path) -> None:
 def test_linter_exempts_private_functions(tmp_path: Path) -> None:
     """Raises inside single-underscore-prefixed functions are skipped."""
     good = tmp_path / "private.py"
-    good.write_text(
-        "def _internal() -> None:\n"
-        "    raise ValueError('bad')\n"
-    )
+    good.write_text("def _internal() -> None:\n    raise ValueError('bad')\n")
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(good)],
         cwd=REPO_ROOT,
         capture_output=True,
         text=True,
     )
-    assert result.returncode == 0, (
-        f"linter should exempt private functions:\n{result.stderr}"
-    )
+    assert result.returncode == 0, f"linter should exempt private functions:\n{result.stderr}"
 
 
 def test_linter_enforces_dunder_methods(tmp_path: Path) -> None:
     """Dunder methods (``__post_init__`` etc.) are user-facing — enforced."""
     bad = tmp_path / "dunder.py"
     bad.write_text(
-        "class Cfg:\n"
-        "    def __post_init__(self) -> None:\n"
-        "        raise ValueError('no')\n"
+        "class Cfg:\n    def __post_init__(self) -> None:\n        raise ValueError('no')\n"
     )
     result = subprocess.run(
         [sys.executable, str(SCRIPT), str(bad)],

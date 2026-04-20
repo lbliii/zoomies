@@ -107,9 +107,7 @@ def _check_file(path: Path) -> list[str]:
                 return  # can't see the message statically
             stripped = text.strip()
             if not stripped:
-                violations.append(
-                    f"{path}:{node.lineno}: raise message is empty"
-                )
+                violations.append(f"{path}:{node.lineno}: raise message is empty")
                 return
             if not stripped.endswith((".", "?")):
                 violations.append(

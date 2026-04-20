@@ -134,7 +134,7 @@ _handshake(client, server)
 
 # PROTOCOL_VIOLATION (RFC 9000 §20.1) = 0x0a. A real peer would send this on
 # a protocol-level disagreement; we trigger it here with an explicit close.
-server.close(error_code=0x0a, reason="protocol violation: bad frame")
+server.close(error_code=0x0A, reason="protocol violation: bad frame")
 events = _transfer(server, client)
 for evt in events:
     match evt:

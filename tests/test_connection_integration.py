@@ -39,9 +39,7 @@ class _Clock:
         return self._t
 
 
-def _transfer(
-    sender: QuicConnection, receiver: QuicConnection, clock: _Clock
-) -> list[QuicEvent]:
+def _transfer(sender: QuicConnection, receiver: QuicConnection, clock: _Clock) -> list[QuicEvent]:
     """Shuttle every datagram sender produced into receiver; return events."""
     events: list[QuicEvent] = []
     for dg in sender.send_datagrams(now=clock.now()):
