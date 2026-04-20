@@ -8,6 +8,8 @@
 
 **Free-threading-native QUIC and HTTP/3 for Python 3.14t — sans-I/O, typed**
 
+> **Using zoomies from an AI agent (or moving fast)?** See [CLAUDE.md](CLAUDE.md) for a concise library-user guide: mental model, timing contract, event cheatsheet, and foot-guns.
+
 ```python
 import time
 from zoomies.core import QuicConnection, QuicConfiguration

@@ -250,16 +250,31 @@ def _decode_ric(
     max_ent = _max_entries(max_table_capacity)
     full_range = 2 * max_ent
     if encoded_ric > full_range:
-        raise ValueError("Encoded RIC exceeds full range")
+        raise ValueError(
+            f"Invalid QPACK Required Insert Count: encoded_ric={encoded_ric} "
+            f"exceeds full_range={full_range}. "
+            f"Peer's QPACK encoding is malformed; close the H3 connection with "
+            f"QPACK_DECODER_STREAM_ERROR (RFC 9204 §2.2.3)."
+        )
     max_value = total_inserts + max_ent
     max_wrapped = (max_value // full_range) * full_range
     ric = max_wrapped + encoded_ric - 1
     if ric > max_value:
         if ric <= full_range:
-            raise ValueError("Invalid RIC")
+            raise ValueError(
+                f"Invalid QPACK Required Insert Count: ric={ric} is within "
+                f"full_range={full_range} after wrap correction, which is out of spec. "
+                f"Peer's QPACK encoding is malformed; close the H3 connection with "
+                f"QPACK_DECODER_STREAM_ERROR (RFC 9204 §2.2.3)."
+            )
         ric -= full_range
     if ric == 0:
-        raise ValueError("Decoded RIC is zero but encoded was non-zero")
+        raise ValueError(
+            f"Invalid QPACK Required Insert Count: decoded ric=0 "
+            f"but encoded_ric={encoded_ric} was non-zero. "
+            f"Peer's QPACK encoding is malformed; close the H3 connection with "
+            f"QPACK_DECODER_STREAM_ERROR (RFC 9204 §2.2.3)."
+        )
     return ric
 
 

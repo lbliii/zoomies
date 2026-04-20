@@ -63,14 +63,22 @@ class CryptoContext:
     def _encrypt_payload(self, plain: bytes, header: bytes, pn: int) -> bytes:
         """AEAD encrypt (RFC 9001 5.3)."""
         if self._aead is None or self._iv is None:
-            raise RuntimeError("Crypto not initialized")
+            raise RuntimeError(
+                "Packet-protection keys are not installed for this encryption level. "
+                "Keys are installed during the handshake — call datagram_received() with "
+                "the appropriate handshake packet, or handle_timer() to drive key installation."
+            )
         nonce = _quic_nonce(self._iv, pn)
         return self._aead.encrypt(nonce, plain, header)
 
     def _decrypt_payload(self, ciphertext: bytes, header: bytes, pn: int) -> bytes:
         """AEAD decrypt."""
         if self._aead is None or self._iv is None:
-            raise RuntimeError("Crypto not initialized")
+            raise RuntimeError(
+                "Packet-protection keys are not installed for this encryption level. "
+                "Keys are installed during the handshake — call datagram_received() with "
+                "the appropriate handshake packet, or handle_timer() to drive key installation."
+            )
         nonce = _quic_nonce(self._iv, pn)
         return self._aead.decrypt(nonce, ciphertext, header)
 
@@ -249,7 +257,11 @@ class CryptoPair:
         Retains old receive keys for reordered packets (RFC 9001 §6.5).
         """
         if self._recv._secret is None or self._send._secret is None:
-            raise RuntimeError("Cannot update keys: 1-RTT keys not set up")
+            raise RuntimeError(
+                "Cannot update keys: 1-RTT packet-protection keys are not installed. "
+                "Wait for HandshakeComplete before calling update_keys(); key updates "
+                "are only valid in the 1-RTT packet space (RFC 9001 §6)."
+            )
         new_recv_secret = hkdf_expand_label(
             hashes.SHA256,
             self._recv._secret,

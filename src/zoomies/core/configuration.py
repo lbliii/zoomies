@@ -88,17 +88,40 @@ class QuicConfiguration:
     def __post_init__(self) -> None:
         if not self.is_client:
             if not self.certificate:
-                raise ValueError("Server QuicConfiguration requires non-empty 'certificate'")
+                raise ValueError(
+                    "Server QuicConfiguration requires non-empty 'certificate'. "
+                    "Pass certificate=<PEM bytes> in QuicConfiguration, "
+                    "or set is_client=True for a client-mode config."
+                )
             if not self.private_key:
-                raise ValueError("Server QuicConfiguration requires non-empty 'private_key'")
+                raise ValueError(
+                    "Server QuicConfiguration requires non-empty 'private_key'. "
+                    "Pass private_key=<PEM bytes> in QuicConfiguration, "
+                    "or set is_client=True for a client-mode config."
+                )
         if self.is_client and self.verify_mode and self.ca_certs is None:
-            raise ValueError("Client QuicConfiguration with verify_mode=True requires 'ca_certs'")
+            raise ValueError(
+                "Client QuicConfiguration with verify_mode=True requires 'ca_certs'. "
+                "Pass ca_certs=<PEM bytes> in QuicConfiguration, "
+                "or set verify_mode=False explicitly to skip peer-cert validation."
+            )
         if self.idle_timeout < 0:
-            raise ValueError("idle_timeout must be non-negative")
+            raise ValueError(
+                f"idle_timeout must be non-negative, got {self.idle_timeout}. "
+                f"Pass idle_timeout=<seconds ≥ 0> in QuicConfiguration; 0 disables the timer."
+            )
         if self.max_data < 0:
-            raise ValueError("max_data must be non-negative")
+            raise ValueError(
+                f"max_data must be non-negative, got {self.max_data}. "
+                f"Pass max_data=<bytes ≥ 0> in QuicConfiguration; "
+                f"0 disables connection-level flow control."
+            )
         if self.max_stream_data < 0:
-            raise ValueError("max_stream_data must be non-negative")
+            raise ValueError(
+                f"max_stream_data must be non-negative, got {self.max_stream_data}. "
+                f"Pass max_stream_data=<bytes ≥ 0> in QuicConfiguration; "
+                f"0 disables per-stream flow control."
+            )
         if self.max_data == 0:
             warnings.warn(
                 "max_data=0 disables connection-level flow control — "
@@ -106,4 +129,7 @@ class QuicConfiguration:
                 stacklevel=2,
             )
         if self.server_name is not None and self.server_name == "":
-            raise ValueError("server_name must be None or a non-empty string")
+            raise ValueError(
+                "server_name must be None or a non-empty string, got an empty string. "
+                "Pass server_name=<hostname> for SNI, or server_name=None to disable SNI."
+            )

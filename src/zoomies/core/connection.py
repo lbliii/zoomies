@@ -283,7 +283,11 @@ class QuicConnection:
     def connect(self) -> None:
         """Generate Initial packet with ClientHello. Client mode only. Call once."""
         if not self._is_client:
-            raise RuntimeError("connect() is only for client mode")
+            raise RuntimeError(
+                "connect() called on a server-mode QuicConnection. "
+                "Set is_client=True in QuicConfiguration, or drive the server by calling "
+                "datagram_received() with the peer's Initial packet instead of connect()."
+            )
         self._our_cid = os.urandom(8)
         self._our_cids = {self._our_cid}
         self._our_seq_to_cid = {0: self._our_cid}
@@ -386,13 +390,19 @@ class QuicConnection:
             # Connection-level send-side flow control (RFC 9000 §4.1)
             if self._peer_max_data > 0 and self._peer_data_sent + len(data) > self._peer_max_data:
                 raise BufferError(
-                    f"Peer connection flow control limit exceeded "
-                    f"({self._peer_data_sent} sent + {len(data)} new > {self._peer_max_data} limit)"
+                    f"Peer connection flow control limit exceeded ("
+                    f"{self._peer_data_sent} sent + {len(data)} new > "
+                    f"{self._peer_max_data} limit). "
+                    f"Call send_datagrams() to flush, then wait for the peer to send a "
+                    f"MAX_DATA frame before retrying."
                 )
             limit = self._config.max_send_queue_bytes
             if limit > 0 and self._stream_send_queue_bytes + len(data) > limit:
                 raise BufferError(
-                    f"Send queue full ({self._stream_send_queue_bytes} bytes queued, limit {limit})"
+                    f"Send queue full "
+                    f"({self._stream_send_queue_bytes} bytes queued, limit {limit}). "
+                    f"Call send_datagrams() more frequently to drain, or raise "
+                    f"max_send_queue_bytes in QuicConfiguration."
                 )
             self._stream_send_queue.append((stream_id, data, end_stream))
             self._stream_send_queue_bytes += len(data)
@@ -402,7 +412,22 @@ class QuicConnection:
     def datagram_received(
         self, data: bytes, addr: tuple[str, int], *, now: float = 0.0
     ) -> list[QuicEvent]:
-        """Process incoming datagram; returns events."""
+        """Process an incoming UDP datagram; return events produced.
+
+        Contract:
+            - ``data``: raw UDP payload (one datagram, may contain multiple
+              coalesced QUIC packets).
+            - ``addr``: ``(host, port)`` of the sender. Used for address
+              validation and path migration checks.
+            - ``now``: monotonic seconds (``time.monotonic()``). MUST be
+              non-decreasing across calls — the RTT estimator and idle
+              timer assume time moves forward.
+            - Never raises for malformed wire data; instead emits
+              ``PacketDropped`` / ``DecryptionFailed`` / ``ConnectionClosed``
+              events. Unhandled exceptions here are library bugs.
+            - After calling this, call ``send_datagrams()`` to flush any
+              packets (ACKs, CRYPTO, HANDSHAKE_DONE) this handler queued.
+        """
         if now <= 0.0:
             import warnings
 
@@ -1346,7 +1371,21 @@ class QuicConnection:
         return encrypted
 
     def send_datagrams(self, *, now: float = 0.0) -> list[bytes]:
-        """Return queued datagrams to send."""
+        """Drain queued datagrams to send on the wire.
+
+        Contract:
+            - ``now``: monotonic seconds (``time.monotonic()``). MUST be
+              non-decreasing across calls — the loss detector stamps
+              packet send-times from this value.
+            - Call after every ``datagram_received()`` and after every
+              ``handle_timer()`` to flush generated packets (ACKs, probes,
+              stream data, CONNECTION_CLOSE).
+            - Returns one ``bytes`` per UDP datagram. Send each verbatim;
+              do not split, merge, or reorder them.
+            - If you skip the timer loop (``get_timer()`` /
+              ``handle_timer()``), idle timeout and loss recovery will not
+              fire and this method will stop producing retransmits.
+        """
         if now <= 0.0:
             import warnings
 
@@ -1578,7 +1617,11 @@ class QuicConnection:
     ) -> bytes:
         """Encrypt a short header packet with the given payload."""
         if not self._one_rtt_crypto:
-            raise RuntimeError("1-RTT crypto not initialized")
+            raise RuntimeError(
+                "Cannot send 1-RTT packets: 1-RTT keys not yet installed (handshake not complete). "
+                "Feed handshake datagrams via datagram_received() and wait for a "
+                "HandshakeComplete event before sending stream data."
+            )
         pn = self._one_rtt_pn
         pn_len = self._optimal_pn_length()
         header_buf = Buffer()
@@ -1615,7 +1658,11 @@ class QuicConnection:
         The SessionTicket should be stored server-side for future PSK validation.
         """
         if not self._tls_ctx:
-            raise RuntimeError("No TLS context — handshake not started")
+            raise RuntimeError(
+                "TLS context not initialized: handshake has not started yet. "
+                "Call connect() (client) or feed an incoming Initial packet via "
+                "datagram_received() (server) to start the handshake."
+            )
         return self._tls_ctx.generate_session_ticket()
 
     def receive_new_session_ticket(self, data: bytes) -> SessionTicket:
@@ -1634,7 +1681,12 @@ class QuicConnection:
             stacklevel=2,
         )
         if not self._client_tls_ctx:
-            raise RuntimeError("No client TLS context")
+            raise RuntimeError(
+                "Session ticket operations require a client-mode TLS context, "
+                "but this connection is in server mode. "
+                "Open a client QuicConnection with is_client=True in QuicConfiguration "
+                "to capture session tickets."
+            )
         return self._client_tls_ctx.receive_new_session_ticket(data)
 
     # --- Public lifecycle methods ---
@@ -1673,8 +1725,18 @@ class QuicConnection:
     def get_timer(self) -> float | None:
         """Return absolute time of next timer deadline, or None if no timer pending.
 
-        Sans-I/O: the caller uses this to schedule when to call handle_timer().
-        Returns the earliest of: idle timeout, PTO deadline.
+        Contract:
+            - Returns an absolute monotonic deadline (same clock as the
+              ``now`` argument passed elsewhere), NOT a relative delay.
+            - Returns ``None`` when the connection is closed or has no
+              pending deadline — the caller should not schedule a wake-up.
+            - Returns the earliest of: idle timeout, PTO (probe timeout),
+              key-discard deadline after a key update.
+            - Call after every ``datagram_received()``,
+              ``send_datagrams()``, or ``handle_timer()`` — the deadline
+              can move in either direction as state changes.
+            - Sans-I/O: this library never sleeps. The caller owns the
+              clock and is responsible for waking to call ``handle_timer``.
         """
         if self._state == ConnectionState.CLOSED:
             return None
@@ -1697,9 +1759,21 @@ class QuicConnection:
         return min(deadlines) if deadlines else None
 
     def handle_timer(self, now: float) -> list[QuicEvent]:
-        """Handle timer expiry. Called by the caller when get_timer() deadline passes.
+        """Fire any timers whose deadline has passed; return events produced.
 
-        Sans-I/O: the library never sleeps. The caller provides the current time.
+        Contract:
+            - ``now``: monotonic seconds (``time.monotonic()``). MUST be
+              non-decreasing across calls — comparing to stored deadlines
+              assumes a forward-only clock.
+            - Safe to call at any time, even before ``get_timer()``
+              returns a deadline or well after it passes; no-op when no
+              timer is due.
+            - May emit ``ConnectionClosed`` (idle timeout) or queue
+              outbound packets (PTO probe, key-update machinery). Always
+              follow with ``send_datagrams(now=now)`` to flush probes.
+            - Sans-I/O: this library never sleeps. The caller is
+              responsible for waking at or after ``get_timer()`` and
+              passing the actual current time here.
         """
         events: list[QuicEvent] = []
         if self._state == ConnectionState.CLOSED:

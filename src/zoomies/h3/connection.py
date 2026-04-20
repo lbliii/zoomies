@@ -101,8 +101,9 @@ class H3Connection:
     ) -> None:
         if is_client is None and qpack_max_table_capacity > 0 and encoder_stream_id is None:
             raise ValueError(
-                "is_client is required when qpack_max_table_capacity > 0 "
-                "(needed to allocate the correct unidirectional stream IDs)"
+                "is_client is required when qpack_max_table_capacity > 0. "
+                "Pass is_client=True/False explicitly so the QPACK encoder/"
+                "decoder streams get the correct unidirectional stream IDs."
             )
         resolved_is_client = is_client if is_client is not None else True
         self._stream_buffers: dict[int, bytearray] = {}
@@ -226,7 +227,11 @@ class H3Connection:
     ) -> None:
         """Send HTTP/3 HEADERS frame. Requires sender in constructor."""
         if self._sender is None:
-            raise RuntimeError("H3Connection needs sender for send_headers")
+            raise RuntimeError(
+                "H3Connection.send_headers() requires an H3StreamSender, but sender is None. "
+                "Construct H3Connection with sender=<your QuicConnection or H3StreamSender> "
+                "to enable outbound framing."
+            )
 
         if self._encoder is not None:
             payload = self._encoder.encode_from_bytes(headers)
@@ -253,7 +258,11 @@ class H3Connection:
     ) -> None:
         """Send HTTP/3 DATA frame. Requires sender in constructor."""
         if self._sender is None:
-            raise RuntimeError("H3Connection needs sender for send_data")
+            raise RuntimeError(
+                "H3Connection.send_data() requires an H3StreamSender, but sender is None. "
+                "Construct H3Connection with sender=<your QuicConnection or H3StreamSender> "
+                "to enable outbound framing."
+            )
         frame = _encode_frame(H3_FRAME_DATA, data)
         self._sender.send_stream_data(stream_id, frame, end_stream)
 
