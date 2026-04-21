@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-04-20
+
+### Added
+
+- **Agent-first developer UX** — `CLAUDE.md` orientation guide for AI coding agents, covering mental model, canonical client loop, timing contract, event cheatsheet, and top foot-guns
+- **`AGENTS.md`** — contributor conventions for sharp-edges discipline and RFC adherence
+- **`examples/error_handling.py`** — patterns for handling every `QuicEvent` variant
+- **`examples/realistic_server.py`** — end-to-end server loop mirroring the CLAUDE.md client example
+- **`examples/zero_rtt_resumption.py`** — 0-RTT reconnect flow with ticket storage
+- **Actionable error messages** — raises across `core/`, `crypto/`, and `h3/` now include the offending value, the expected range/contract, and the RFC section that governs the rule
+- **Expanded event docstrings** — every `QuicEvent` variant documents when it fires, what to do, and the relevant spec reference
+
+### Changed
+
+- **Python 3.14+ idioms** — migrated dispatch paths to `match`/`case`, adopted PEP 695 generics, removed all `from __future__ import annotations` imports
+- **Sharp-edges v2/v3 hardening** — tightened configuration validation, transport parameter bounds checks, TLS state-machine guards, H3 settings negotiation, and send-buffer accounting
+
+### CI / Tooling
+
+- **Silent-exception lint gate** — ruff `S110`/`S112` now fail CI and pre-commit on `try/except: pass` and `try/except: continue`
+- **`scripts/lint_raise_messages.py`** — custom linter enforcing that `raise` statements carry actionable messages; wired into CI and exercised by `tests/test_raise_messages.py`
+
 ## [0.3.2] - 2026-04-12
 
 ### Added
