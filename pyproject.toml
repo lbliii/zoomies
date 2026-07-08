@@ -58,7 +58,7 @@ source = ["src/zoomies"]
 omit = ["*/tests/*", "*/benchmarks/*"]
 
 [tool.coverage.report]
-fail_under = 0
+fail_under = 80 # honest ratchet — measured 90.85% on 2026-07-08; keep ratcheting toward measured
 exclude_lines = [
     "pragma: no cover",
     "def __repr__",
@@ -109,7 +109,7 @@ select = [
 # Testing
 test = { cmd = "pytest", help = "Run full test suite" }
 test-fast = { cmd = "pytest tests/ -x -q --timeout=10", help = "Fast feedback loop" }
-test-parallel = { cmd = "pytest -n auto -q --tb=short --dist worksteal", help = "Run tests in parallel (CI)" }
+test-parallel = { cmd = "pytest -n auto -q --tb=short --dist worksteal --cov=zoomies --cov-report=term", help = "Run tests in parallel with coverage gate (CI)" }
 test-cov = { cmd = "pytest tests/ --cov=zoomies --cov-report=term-missing", help = "Run tests with coverage" }
 
 # Type Checking
